@@ -1,12 +1,13 @@
 [project]
-name = "rye-runner"
+name = "uv-runner"
 version = "0.1.0"
-description = "Run tasks/scripts defined in pyproject.toml files using rye"
+description = "Run scripts defined in uv-managed pyproject.toml files."
 authors = [
     { name = "Brandon Carpenter", email = "brandon@avantus.com" }
 ]
 dependencies = [
     "click ~= 8.1.7",
+    "tomli ~= 2.0.1; python_version < '3.11'",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
@@ -20,28 +21,37 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Build Tools",
     "Typing :: Typed",
 ]
 
 [project.scripts]
-"rr" = "rye_runner:main"
+"rr" = "uv_runner:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.rye]
+[tool.uv]
 managed = true
 dev-dependencies = [
     "mypy ~= 1.11.1",
 ]
 
+[tool.uv-runner.scripts]
+env = 'env'
+invalid = { cmd = 'env', env-file = 'some.env' }
+chained = { chain = ["env", "none", "invalid"] }
+mypy = 'echo "masked out"'
+#hello = { "call" = "builtins:print('Hello World')" }
+hello = { cmd = "bash -c 'echo $TEST $BLAH $ENV'", env = { "TEST" = "Hello" }, env-file = 'env' }
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rye_runner"]
+packages = ["src/uv_runner"]
 
 [tool.mypy]
 strict = true
