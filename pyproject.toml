@@ -34,12 +34,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv]
-managed = true
 dev-dependencies = [
     "mypy ~= 1.11.1",
 ]
 
 [tool.uv-runner.scripts]
+# TODO command groups, markers for platform-specific commands
 env = 'env'
 invalid = { cmd = 'env', env-file = 'some.env' }
 chained = { chain = ["env", "none", "invalid"] }

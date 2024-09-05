@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 import shlex
 import shutil
-import stat
 import subprocess
 import sys
 if sys.version_info < (3, 11):
@@ -77,13 +76,24 @@ class _ScriptBase:
             else:
                 env.update(self.env)
         if self.env_file:
+            path = Path(self.env_file)
+            if not path.is_absolute():
+                path = project.root / path
             env = environment.load_environment_file(path, env)
         env.pop('PYTHONHOME', None)
         return env
 
-    def run(self, args: Sequence[str | Path], project: PyProject) -> int:
+    def run(self, args: Sequence[str | Path], project: PyProject, *,
+            executable: str | os.PathLike[str] | None = None) -> int:
+        if executable is None:
+            exe = args[0]
+            if os.sep in exe and not os.path.isabs(exe):
+                args = [project.root / exe, args[1:]]
+        cwd = self.cwd
+        if cwd and not os.path.isabs(cwd):
+            cwd = project.root / cwd
         env = self._get_environment(project)
-        return subprocess.run(args, cwd=self.cwd, env=env).returncode
+        return subprocess.run(args, cwd=cwd, env=env, executable=executable).returncode
 
 
 class Cmd(_ScriptBase):
@@ -133,7 +143,7 @@ class Call(_ScriptBase):
         return {'call': self.call} | super().to_dict()
 
     def run(self, args: Sequence[str | Path], project: PyProject) -> int:
-        cmd: list[str | Path] = [project.venv_python_bin]
+        cmd: list[str | Path] = ['python']
         try:
             module, call = self.call.split(':', maxsplit=1)
         except ValueError:
@@ -143,7 +153,7 @@ class Call(_ScriptBase):
                 call = f'{call}()'
             cmd += ['-c', f"import sys, {module} as _1; sys.exit(_1.{call})"]
         cmd += args
-        return self.run(cmd, project)
+        return super().run(cmd, project, executable=project.venv_python_bin)
 
 
 class Chain(_ScriptBase):
@@ -195,11 +205,12 @@ class Exec(_ScriptBase):
 
 
 class External(_ScriptBase):
-    __slots__ = 'cmd',
-    __match_args__ = 'cmd',
+    __slots__ = 'cmd', 'executable'
+    __match_args__ = 'cmd', 'executable'
 
-    def __init__(self, cmd: str) -> None:
+    def __init__(self, cmd: str, executable: str | Path) -> None:
         self.cmd: Final = cmd
+        self.executable: Final = executable
         super().__init__()
 
     def __eq__(self, other: object) -> bool:
@@ -213,7 +224,7 @@ class External(_ScriptBase):
         return {}
 
     def run(self, args: Sequence[str | Path], project: PyProject) -> int:
-        return super().run([self.cmd, *args], project)
+        return super().run([self.cmd, *args], project, executable=self.executable)
 
 
 _Script = Cmd | Call | Chain | Exec | External
@@ -223,13 +234,20 @@ class Project(Protocol):
     @property
     def doc(self) -> Mapping[str, Any]: ...
 
+    @property
+    def managed(self) -> bool:
+        match self.doc:
+            case {"tool": {"uv": {"managed": bool(is_managed)}}}:
+                return is_managed
+        return True
+
     def script(self, name: str) -> _Script | None:
         scripts = self._scripts()
         entry = scripts.get(name)
         if entry is None:
-            external = shutil.which(name, path=self.venv_bin_path)
-            if external and not is_unsafe_script(Path(external)):
-                return External(external)
+            executable = shutil.which(name, path=self.venv_bin_path)
+            if executable and not is_unsafe_script(Path(executable)):
+                return External(name, executable)
             return None
         return self._parse_script(entry)
 
@@ -260,15 +278,13 @@ class Project(Protocol):
 
         # Match options
         cwd: str | None
-        env: str | Mapping[str, str] | None
-        env_file: str | None
-        help: str | None
-
         match entry:
             case {"cwd": str(cwd)} if cwd:
                 pass
             case _:
                 cwd = None
+
+        env: str | Mapping[str, str] | None
         match entry:
             case {"env": str(env)} if env := str(env).strip():
                 pass
@@ -276,11 +292,15 @@ class Project(Protocol):
                 env = cast(Mapping[str, str], table)
             case _:
                 env = None
+
+        env_file: str | None
         match entry:
             case {"env-file": str(env_file)} if env_file:
                 pass
             case _:
                 env_file = None
+
+        help: str | None
         match entry:
             case {"help": str(help)} if help:
                 pass
@@ -290,7 +310,6 @@ class Project(Protocol):
         # Match the script type
         string: str
         seq: Sequence[str]
-
         match entry:
             case {"call": str(string)} if CALL_REGEX.match(string):
                 return Call(string, cwd=cwd, env=env, env_file=env_file, help=help)
@@ -310,11 +329,17 @@ class Project(Protocol):
 
         return None
 
+    def sync(self) -> None:
+        subprocess.run(['uv', 'sync', '--directory', self.root, '--frozen'])
+
     @property
     def root(self) -> Path: ...
 
     @property
     def venv_path(self) -> Path:
+        project_venv = os.environ.get("UV_PROJECT_ENVIRONMENT")
+        if project_venv:
+            return Path(project_venv)
         return self.root / '.venv'
 
     @property
@@ -428,11 +453,24 @@ class Workspace(Project):
     def from_pyproject(cls, project: PyProject) -> Workspace | None:
         root = project.root
         match project.doc:
-            case {"tool": {"uv": {"workspace": {"members": [*members]}}}}:
-                members = tuple(path for mem in members
-                                if isinstance(mem, str) and (path := (root / mem)).exists())
-                return cls(project.name, project.root, project.doc, members)
-        return None
+            case {"tool": {"uv": {"workspace": {**workspace}}}}:
+                pass
+            case _:
+                return None
+        match workspace:
+            case {"members": [*members]}:
+                members = tuple(path for mem in members if isinstance(mem, str)
+                                for path in root.glob(mem))
+            case _:
+                return None
+        match workspace:
+            case {"exclude": [*exclude]}:
+                exclude = set(path for mem in exclude if isinstance(mem, str)
+                              for path in root.glob(mem))
+            case _:
+                exclude = set()
+        members = tuple(m for m in members if m not in exclude)
+        return cls(project.name, project.root, project.doc, members)
 
 
 @click.command(
@@ -459,6 +497,8 @@ def main(command: tuple[str, ...], do_list: bool, pyproject: Path | None) -> Non
     if do_list or not command:
         list_scripts(project, True)
         exit(0)
+    if project.managed:
+        project.sync()
     name, *args = command
     exit(run_script(project, name, args))
 
@@ -517,7 +557,7 @@ def _error(msg: str, exitcode: int = ...) -> NoReturn: ...
 @overload
 def _error(msg: str, exitcode: None) -> None: ...
 def _error(msg: str, exitcode: int | None = 1) -> NoReturn | None:
-    click.echo(f'{click.style("error:", fg="red")} {msg}')
+    click.echo(f'{click.style("error", fg="red", bold=True)}: {msg}')
     if exitcode is not None:
         exit(exitcode)
     return None
