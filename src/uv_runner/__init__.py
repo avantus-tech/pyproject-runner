@@ -11,7 +11,8 @@ if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
     import tomllib
-from typing import Any, cast, Final, Iterator, Mapping, NoReturn, overload, Protocol, Sequence
+from typing import (Any, cast, Final, Iterator, Mapping, NoReturn,
+                    overload, Protocol, Sequence)
 
 import click
 
@@ -70,28 +71,29 @@ class _ScriptBase:
             env['PATH'] = str(project.venv_bin_path)
         else:
             env['PATH'] = f'{project.venv_bin_path}{os.pathsep}{path}'
-        if self.env:
-            if isinstance(self.env, str):
-                env = environment.load_environment(self.env, env)
-            else:
-                env.update(self.env)
+        if isinstance(self.env, str):
+            env = environment.expand(self.env, env)
+        elif self.env:
+            env.update(self.env)
         if self.env_file:
-            path = Path(self.env_file)
-            if not path.is_absolute():
-                path = project.root / path
-            env = environment.load_environment_file(path, env)
+            env_path = Path(self.env_file)
+            if not env_path.is_absolute():
+                env_path = project.root / env_path
+            env = environment.expand(env_path.read_text('utf-8'), env)
         env.pop('PYTHONHOME', None)
         return env
 
-    def run(self, args: Sequence[str | Path], project: PyProject, *,
-            executable: str | os.PathLike[str] | None = None) -> int:
+    def _run(self, args: Sequence[str | Path], project: PyProject, *,
+             executable: str | os.PathLike[str] | None = None) -> int:
         if executable is None:
-            exe = args[0]
+            exe = str(args[0])
+            # pathlib is not used here because it drops './' from paths
             if os.sep in exe and not os.path.isabs(exe):
-                args = [project.root / exe, args[1:]]
-        cwd = self.cwd
-        if cwd and not os.path.isabs(cwd):
-            cwd = project.root / cwd
+                args = [project.root / exe, *args[1:]]
+        if self.cwd and not os.path.isabs(self.cwd):
+            cwd: str | Path | None = project.root / self.cwd
+        else:
+            cwd = self.cwd
         env = self._get_environment(project)
         return subprocess.run(args, cwd=cwd, env=env, executable=executable).returncode
 
@@ -101,11 +103,11 @@ class Cmd(_ScriptBase):
     __match_args__ = 'cmd', 'cwd', 'env', 'env_file', 'help'
 
     def __init__(self, cmd: str | Sequence[str], cwd: str | None = None,
-                 env: Mapping[str, str] | None = None, env_file: str | None = None,
+                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
                  help: str | None = None) -> None:
         if isinstance(cmd, str):
             cmd = shlex.split(cmd)
-        self.cmd: Final = cmd
+        self.cmd: Final = tuple(cmd)
         super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
 
     def __eq__(self, other: object) -> bool:
@@ -119,7 +121,7 @@ class Cmd(_ScriptBase):
         return {'cmd': self.cmd} | super().to_dict()
 
     def run(self, args: Sequence[str | Path], project: PyProject) -> int:
-        return super().run([*self.cmd, *args], project)
+        return super()._run([*self.cmd, *args], project)
 
 
 class Call(_ScriptBase):
@@ -127,7 +129,7 @@ class Call(_ScriptBase):
     __match_args__ = 'call', 'cwd', 'env', 'env_file', 'help'
 
     def __init__(self, call: str, cwd: str | None = None,
-                 env: Mapping[str, str] | None = None, env_file: str | None = None,
+                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
                  help: str | None = None) -> None:
         self.call: Final = call
         super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
@@ -147,13 +149,13 @@ class Call(_ScriptBase):
         try:
             module, call = self.call.split(':', maxsplit=1)
         except ValueError:
-            cmd += ['-m', self.call]
+            python_args = ['-m', self.call]
         else:
             if '(' not in call:
                 call = f'{call}()'
-            cmd += ['-c', f"import sys, {module} as _1; sys.exit(_1.{call})"]
-        cmd += args
-        return super().run(cmd, project, executable=project.venv_python_bin)
+            python_args = ['-c', f"import sys, {module} as _1; sys.exit(_1.{call})"]
+        return super()._run(['python', *python_args, *args],
+                            project, executable=project.venv_python_bin)
 
 
 class Chain(_ScriptBase):
@@ -161,7 +163,7 @@ class Chain(_ScriptBase):
     __match_args__ = 'chain', 'cwd', 'env', 'env_file', 'help'
 
     def __init__(self, chain: Sequence[str], cwd: str | None = None,
-                 env: Mapping[str, str] | None = None, env_file: str | None = None,
+                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
                  help: str | None = None) -> None:
         self.chain: Final = tuple(chain)
         super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
@@ -185,7 +187,7 @@ class Exec(_ScriptBase):
     __match_args__ = 'exec', 'cwd', 'env', 'env_file', 'help'
 
     def __init__(self, exec: str, cwd: str | None = None,
-                 env: Mapping[str, str] | None = None, env_file: str | None = None,
+                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
                  help: str | None = None) -> None:
         self.exec: Final = exec
         super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
@@ -201,7 +203,8 @@ class Exec(_ScriptBase):
         return {'exec': self.exec} | super().to_dict()
 
     def run(self, args: Sequence[str | Path], project: PyProject) -> int:
-        return super().run([project.venv_python_bin, '-c', self.exec, *args], project)
+        return super()._run(['python', '-c', self.exec, *args],
+                            project, executable=project.venv_python_bin)
 
 
 class External(_ScriptBase):
@@ -224,7 +227,7 @@ class External(_ScriptBase):
         return {}
 
     def run(self, args: Sequence[str | Path], project: PyProject) -> int:
-        return super().run([self.cmd, *args], project, executable=self.executable)
+        return super()._run([self.cmd, *args], project, executable=self.executable)
 
 
 _Script = Cmd | Call | Chain | Exec | External
@@ -458,14 +461,14 @@ class Workspace(Project):
             case _:
                 return None
         match workspace:
-            case {"members": [*members]}:
-                members = tuple(path for mem in members if isinstance(mem, str)
+            case {"members": [*_members]}:
+                members = tuple(path for mem in _members if isinstance(mem, str)
                                 for path in root.glob(mem))
             case _:
                 return None
         match workspace:
-            case {"exclude": [*exclude]}:
-                exclude = set(path for mem in exclude if isinstance(mem, str)
+            case {"exclude": [*_exclude]}:
+                exclude = set(path for mem in _exclude if isinstance(mem, str)
                               for path in root.glob(mem))
             case _:
                 exclude = set()

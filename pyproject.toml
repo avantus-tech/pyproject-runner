@@ -38,15 +38,6 @@ dev-dependencies = [
     "mypy ~= 1.11.1",
 ]
 
-[tool.uv-runner.scripts]
-# TODO command groups, markers for platform-specific commands
-env = 'env'
-invalid = { cmd = 'env', env-file = 'some.env' }
-chained = { chain = ["env", "none", "invalid"] }
-mypy = 'echo "masked out"'
-#hello = { "call" = "builtins:print('Hello World')" }
-hello = { cmd = "bash -c 'echo $TEST $BLAH $ENV'", env = { "TEST" = "Hello" }, env-file = 'env' }
-
 [tool.hatch.metadata]
 allow-direct-references = true
 
@@ -54,4 +45,6 @@ allow-direct-references = true
 packages = ["src/uv_runner"]
 
 [tool.mypy]
+mypy_path = "src"
+packages = "uv_runner"
 strict = true
