@@ -22,7 +22,7 @@ Line comments begin at an unquoted and unescaped hash/pound (#) at the
 beginning of a line or after white space and continue to the end of the
 line. Comments are discarded by the parser.
 
-Grammar (BNF-like syntax):
+Syntax:
     expression        ::=  (assignment | comment | ws)* "\n"
     assignment        ::=  ws* name ws* "=" ws* value (ws+ comment)?
     name              ::=  (letter | "_") (letter | digit | "_")*
