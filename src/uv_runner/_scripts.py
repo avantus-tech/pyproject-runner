@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import re
 import shlex
 import subprocess
 import sys
@@ -12,8 +11,8 @@ from . import environment
 from . import _project
 
 
-DOTNAME: Final = r'[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*'
-CALL_REGEX: Final = re.compile(rf'{DOTNAME}(?::{DOTNAME}(?:\(.*\))?)?$')
+class RunError(Exception):
+    pass
 
 
 class _Base:
@@ -117,40 +116,6 @@ class Cmd(_Base):
         return super()._run([*self.cmd, *args], project)
 
 
-class Call(_Base):
-    __slots__ = 'call',
-    __match_args__ = 'call', 'cwd', 'env', 'env_file', 'help'
-
-    def __init__(self, call: str, cwd: str | None = None,
-                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
-                 help: str | None = None) -> None:
-        self.call: Final = call
-        super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
-
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.call == other.call and super().__eq__(other))
-
-    def _format_args(self) -> str:
-        return f'call={self.call!r}, {super()._format_args()}'
-
-    def to_dict(self) -> dict[str, Any]:
-        return {'call': self.call} | super().to_dict()
-
-    def run(self, args: Sequence[str | Path], project: _project.PyProject) -> int:
-        cmd: list[str | Path] = ['python']
-        try:
-            module, call = self.call.split(':', maxsplit=1)
-        except ValueError:
-            python_args = ['-m', self.call]
-        else:
-            if '(' not in call:
-                call = f'{call}()'
-            python_args = ['-c', f"import sys, {module} as _1; sys.exit(_1.{call})"]
-        return super()._run(['python', *python_args, *args],
-                            project, executable=project.venv_python_bin)
-
-
 class Chain(_Base):
     __slots__ = 'chain',
     __match_args__ = 'chain', 'cwd', 'env', 'env_file', 'help'
@@ -172,32 +137,13 @@ class Chain(_Base):
         return {'chain': self.chain} | super().to_dict()
 
     def run(self, args: Sequence[str | Path], project: _project.PyProject) -> int:
-        raise NotImplementedError('Chain commands cannot be run directly')
-
-
-class Exec(_Base):
-    __slots__ = 'exec',
-    __match_args__ = 'exec', 'cwd', 'env', 'env_file', 'help'
-
-    def __init__(self, exec: str, cwd: str | None = None,
-                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
-                 help: str | None = None) -> None:
-        self.exec: Final = exec
-        super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
-
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.exec == other.exec and super().__eq__(other))
-
-    def _format_args(self) -> str:
-        return f'exec={self.exec!r}, {super()._format_args()}'
-
-    def to_dict(self) -> dict[str, Any]:
-        return {'exec': self.exec} | super().to_dict()
-
-    def run(self, args: Sequence[str | Path], project: _project.PyProject) -> int:
-        return super()._run(['python', '-c', self.exec, *args],
-                            project, executable=project.venv_python_bin)
+        if args:
+            raise RunError('extra arguments to chained commands are not allowed')
+        for name in self.chain:
+            returncode = run_script(project, name, ())
+            if returncode:
+                return returncode
+        return 0
 
 
 class External(_Base):
@@ -223,7 +169,7 @@ class External(_Base):
         return super()._run([self.cmd, *args], project, executable=self.executable)
 
 
-ScriptType = Cmd | Call | Chain | Exec | External
+ScriptType = Cmd | Chain | External
 
 
 if sys.platform == 'win32':
@@ -292,8 +238,6 @@ def parse_script(entry: str | Sequence[str] | Mapping[str, Any]) -> ScriptType |
     string: str
     seq: Sequence[str]
     match entry:
-        case {"call": str(string)} if CALL_REGEX.match(string):
-            return Call(string, cwd=cwd, env=env, env_file=env_file, help=help)
         case {"chain": [*seq]} if seq and all(isinstance(v, str) for v in seq) and (seq := [v for v in seq if v]):
             return Chain(seq, cwd=cwd, env=env, env_file=env_file, help=help)
         case {"cmd": str(string)} if string := string.strip():
@@ -304,7 +248,12 @@ def parse_script(entry: str | Sequence[str] | Mapping[str, Any]) -> ScriptType |
             return Cmd(seq, cwd=cwd, env=env, env_file=env_file, help=help)
         case {"cmd": [str(string), *seq]} if all(isinstance(v, str) for v in seq) and (string := string.strip()):
             return Cmd([string, *seq], cwd=cwd, env=env, env_file=env_file, help=help)
-        case {"exec": str(string)} if string := string.strip():
-            return Exec(string, cwd=cwd, env=env, env_file=env_file, help=help)
 
     return None
+
+
+def run_script(project: _project.PyProject, name: str, args: Sequence[str]) -> int:
+    script = project.script(name)
+    if script is None:
+        raise RunError(f'invalid or unknown script {name!r}')
+    return script.run(args, project)

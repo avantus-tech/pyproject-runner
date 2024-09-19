@@ -39,7 +39,10 @@ def main(command: tuple[str, ...], do_list: bool, pyproject: Path | None, show: 
     if project.managed:
         project.sync()
     name, *args = command
-    exit(run_script(project, name, args))
+    try:
+        exit(_scripts.run_script(project, name, args))
+    except _scripts.RunError as exc:
+        _error(str(exc))
 
 
 def show_project(project: _project.PyProject) -> None:
@@ -71,25 +74,6 @@ def list_scripts(project: _project.PyProject, include_external: bool) -> None:
             click.echo(name)
         else:
             click.echo(f'{click.style(name, fg="cyan", bold=True)}  {click.style(script.to_dict(), fg="yellow")}')
-
-
-def run_script(project: _project.PyProject, name: str, args: Sequence[str]) -> int:
-    script = project.script(name)
-    if script is None:
-        _error(f'invalid or unknown script {name!r}')
-    match script:
-        case _scripts.Chain() if args:
-            _error('extra arguments to chained commands are not allowed')
-        case _scripts.Chain(chain):
-            for name in chain:
-                returncode = run_script(project, name, ())
-                if returncode:
-                    return returncode
-        case _scripts.Call() | _scripts.Cmd() | _scripts.Exec() | _scripts.External():
-            return script.run(args, project)
-        case _:
-            raise NotImplementedError
-    return 0
 
 
 @overload
