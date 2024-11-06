@@ -1,10 +1,10 @@
 from pathlib import Path
-from typing import NoReturn, overload, Sequence
+from typing import NoReturn, overload
 
 import click
 
 from . import _project
-from . import _scripts
+from . import _tasks
 
 
 @click.command(
@@ -15,7 +15,7 @@ from . import _scripts
     },
 )
 @click.option('-l', '--list', 'do_list', is_flag=True, default=False,
-              help="List all scripts.")
+              help="List tasks.")
 @click.option("--pyproject", metavar="PATH",
               type=click.Path(exists=True, dir_okay=True, resolve_path=True, path_type=Path),
               help="Use this pyproject.toml file or directory.")
@@ -23,7 +23,7 @@ from . import _scripts
               help='Show project information and exit.')
 @click.argument('command', metavar="[COMMAND]", nargs=-1)
 def main(command: tuple[str, ...], do_list: bool, pyproject: Path | None, show: bool) -> None:
-    """Runs a configured script or a command installed for this package."""
+    """Runs a configured task or a script installed for this package."""
     if pyproject and pyproject.is_file():
         project: _project.PyProject | None = _project.PyProject.load(pyproject)
     else:
@@ -34,14 +34,14 @@ def main(command: tuple[str, ...], do_list: bool, pyproject: Path | None, show: 
         show_project(project)
         exit(0)
     if do_list or not command:
-        list_scripts(project, True)
+        list_tasks(project, True)
         exit(0)
     if project.managed:
         project.sync()
     name, *args = command
     try:
-        exit(_scripts.run_script(project, name, args))
-    except _scripts.RunError as exc:
+        exit(_tasks.run_task(project, name, args))
+    except _tasks.RunError as exc:
         _error(str(exc))
 
 
@@ -64,16 +64,16 @@ def show_project(project: _project.PyProject) -> None:
         ]))
 
 
-def list_scripts(project: _project.PyProject, include_external: bool) -> None:
-    scripts: list[tuple[str, _scripts.ScriptType | None]] = list(project.iter_scripts())
+def list_tasks(project: _project.PyProject, include_external: bool) -> None:
+    tasks: list[tuple[str, _tasks.TaskType | None]] = list(project.iter_tasks())
     if include_external:
-        scripts += [(name, None) for name in _scripts.external_scripts(project.venv_bin_path)]
-    scripts.sort(key=lambda c: (c[0], c[1] is None))
-    for name, script in scripts:
-        if script is None:
+        tasks += [(name, None) for name in _tasks.external_scripts(project.venv_bin_path)]
+    tasks.sort(key=lambda c: (c[0], c[1] is None))
+    for name, task in tasks:
+        if task is None:
             click.echo(name)
         else:
-            click.echo(f'{click.style(name, fg="cyan", bold=True)}  {click.style(script.to_dict(), fg="yellow")}')
+            click.echo(f'{click.style(name, fg="cyan", bold=True)}  {click.style(task.to_dict(), fg="yellow")}')
 
 
 @overload

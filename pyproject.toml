@@ -1,7 +1,7 @@
 [project]
-name = "uv-runner"
+name = "pyproject-runner"
 version = "0.1.0"
-description = "Run scripts defined in uv-managed pyproject.toml files."
+description = "Run tasks defined in pyproject.toml files."
 authors = [
     { name = "Brandon Carpenter", email = "brandon@avantus.com" }
 ]
@@ -27,14 +27,14 @@ classifiers = [
 ]
 
 [project.scripts]
-"rr" = "uv_runner.__main__:main"
+"rr" = "pyproject_runner.__main__:main"  # short for runner-run or run-runner
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "mypy ~= 1.11.1",
 ]
 
@@ -42,7 +42,7 @@ dev-dependencies = [
 only-include = [
     '.python-version',
     'uv.lock',
-    'src/uv_runner/',
+    'src/pyproject_runner/',
     '.gitignore',
     'LICENSE.txt',
     'README.md',
@@ -50,9 +50,15 @@ only-include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/uv_runner"]
+packages = ["src/pyproject_runner"]
 
 [tool.mypy]
 mypy_path = "src"
-packages = "uv_runner"
+packages = "pyproject_runner"
 strict = true
+
+
+[tool.pyproject-runner.tasks]
+version = { call = "builtins:print(__import__('sys').version)" }
+version-cmd = { cmd = ["python", "-c", "builtins:print(__import__('sys').version)"] }
+version-chain = { chain = ["version-cmd", "noop"]}

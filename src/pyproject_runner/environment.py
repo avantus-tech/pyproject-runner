@@ -251,3 +251,33 @@ def expand(text: str, env: Mapping[str, str | None]) -> dict[str, str]:
     """
     updates: dict[str, str | None] = env | evaluate(text, env)  # type: ignore[operator]
     return {k: v for k, v in updates.items() if v is not None}
+
+
+if __name__ == '__main__':
+    from typing import IO
+
+    import click
+
+    @click.command(
+        context_settings={
+            'max_content_width': 120,
+            'help_option_names': ['-h', '--help']
+        },
+    )
+    @click.argument('env-file', type=click.File('r', encoding='utf-8'), nargs=-1)
+    def main(env_file: tuple[IO[str], ...]) -> None:
+        """Show the results of processing an environment file."""
+        env = os.environ.copy()
+        for file in env_file:
+            with file:
+                text = file.read()
+            updates = evaluate(text, env)
+            for name, value in updates.items():
+                if value is None:
+                    click.echo(f'unset {name}')
+                    env.pop(name, None)
+                else:
+                    click.echo(f'{name} = {value!r}')
+                    env[name] = value
+
+    main()

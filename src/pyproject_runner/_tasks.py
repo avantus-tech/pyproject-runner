@@ -140,7 +140,7 @@ class Chain(_Base):
         if args:
             raise RunError('extra arguments to chained commands are not allowed')
         for name in self.chain:
-            returncode = run_script(project, name, ())
+            returncode = run_task(project, name, ())
             if returncode:
                 return returncode
         return 0
@@ -169,7 +169,7 @@ class External(_Base):
         return super()._run([self.cmd, *args], project, executable=self.executable)
 
 
-ScriptType = Cmd | Chain | External
+TaskType = Cmd | Chain | External
 
 
 if sys.platform == 'win32':
@@ -190,8 +190,8 @@ else:
         return path.suffix == '.dylib'
 
 
-def parse_script(entry: str | Sequence[str] | Mapping[str, Any]) -> ScriptType | None:
-    # Match the script type for non-dict-based scripts
+def parse_task(entry: str | Sequence[str] | Mapping[str, Any]) -> TaskType | None:
+    # Match the task type for non-dict-based tasks
     match entry:
         case str(cmd) if cmd := cmd.strip():
             return Cmd(cmd)
@@ -199,7 +199,7 @@ def parse_script(entry: str | Sequence[str] | Mapping[str, Any]) -> ScriptType |
             cmd[0] = cmd[0].strip()
             return Cmd(cmd)
         case {}:
-            pass  # dict-based scripts are handled below
+            pass  # dict-based tasks are handled below
         case _:
             return None
 
@@ -234,7 +234,7 @@ def parse_script(entry: str | Sequence[str] | Mapping[str, Any]) -> ScriptType |
         case _:
             help = None
 
-    # Match the script type
+    # Match the task type
     string: str
     seq: Sequence[str]
     match entry:
@@ -252,8 +252,8 @@ def parse_script(entry: str | Sequence[str] | Mapping[str, Any]) -> ScriptType |
     return None
 
 
-def run_script(project: _project.PyProject, name: str, args: Sequence[str]) -> int:
-    script = project.script(name)
-    if script is None:
-        raise RunError(f'invalid or unknown script {name!r}')
-    return script.run(args, project)
+def run_task(project: _project.PyProject, name: str, args: Sequence[str]) -> int:
+    task = project.task(name)
+    if task is None:
+        raise RunError(f'invalid or unknown task {name!r}')
+    return task.run(args, project)

@@ -2,14 +2,14 @@
 # TODO additional features
 # - [ ] Command groups (to group commands, similar to click)
 # - [ ] Markers for platform-specific commands (e.g., sys.platform == 'win32')
-# - [ ] Include scripts from parent workspace
+# - [ ] Include tasks from parent workspace
 # - [ ] Maybe allow passing arguments to subcommands of chain commands?
-# - [ ] Script aliases
-# - [ ] Add option to show script help
+# - [ ] Task aliases
+# - [ ] Add option to show task help
 # - [ ] Shell completion
 # - [ ] Define environment variables in [tool.uv-runner.environment]?
 # - [ ] Environment variable expansion in commands?
-# - [ ] Add a command to create shims to rr scripts
+# - [ ] Add a command to create shims to rr tasks
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ else:
     import tomllib
 from typing import Any, cast, Final, Iterator, Mapping, Protocol, Sequence
 
-from . import _scripts
+from . import _tasks
 
 
 VENV_BIN: Final = "Scripts" if sys.platform == "win32" else "bin"
@@ -39,32 +39,30 @@ class Project(Protocol):
         match self.doc:
             case {"tool": {"uv": {"managed": bool(is_managed)}}}:
                 return is_managed
-            case {"tool": {"uv-runner": {"managed": bool(is_managed)}}}:
-                return is_managed
             case {"tool": {"uv": _}}:
                 return True
         return False
 
-    def script(self, name: str) -> _scripts.ScriptType | None:
-        scripts = self._scripts()
-        entry = scripts.get(name)
+    def task(self, name: str) -> _tasks.TaskType | None:
+        tasks = self._tasks()
+        entry = tasks.get(name)
         if entry is None:
             executable = shutil.which(name, path=self.venv_bin_path)
-            if executable and not _scripts.is_unsafe_script(Path(executable)):
-                return _scripts.External(name, executable)
+            if executable and not _tasks.is_unsafe_script(Path(executable)):
+                return _tasks.External(name, executable)
             return None
-        return _scripts.parse_script(entry)
+        return _tasks.parse_task(entry)
 
-    def iter_scripts(self) -> Iterator[tuple[str, _scripts.ScriptType]]:
-        for name, entry in self._scripts().items():
-            script = _scripts.parse_script(entry)
-            if script is not None:
-                yield name, script
+    def iter_tasks(self) -> Iterator[tuple[str, _tasks.TaskType]]:
+        for name, entry in self._tasks().items():
+            task = _tasks.parse_task(entry)
+            if task is not None:
+                yield name, task
 
-    def _scripts(self) -> Mapping[str, Any]:
+    def _tasks(self) -> Mapping[str, Any]:
         match self.doc:
-            case {"tool": {"uv-runner": {"scripts": {**scripts}}}}:
-                return cast(Mapping[str, Any], scripts)
+            case {"tool": {"uv-runner": {"tasks": {**tasks}}}}:
+                return cast(Mapping[str, Any], tasks)
         return {}
 
     def sync(self) -> None:
