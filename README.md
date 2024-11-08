@@ -176,17 +176,6 @@ can be parsed by other tools to display help.
 devserver = { cmd = "flask run --app ./hello.py --debug", help = "Start a development server in debug mode" }
 ```
 
-### `tool.uv.managed`
-
-pyproject-runner assumes the project is managed by uv unless `tool.uv.managed` is `false`. Set this
-for projects not being managed by uv to avoid auto synchronization of the virtual environment when
-tasks are run.
-
-```toml
-[tool.uv]
-managed = false
-```
-
 ### Environment file syntax
 
 Environment variables may be loaded from a file or string, expanding variables as needed. The

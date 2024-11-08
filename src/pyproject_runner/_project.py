@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -24,13 +23,6 @@ class TaskLookupError(LookupError):
 class Project(Protocol):
     @property
     def doc(self) -> Mapping[str, Any]: ...
-
-    @property
-    def managed(self) -> bool:
-        match self.doc:
-            case {"tool": {"uv": {"managed": bool(is_managed)}}}:
-                return is_managed
-        return True
 
     def task(self, name: str) -> Task:
         tasks = self._tasks()
@@ -56,9 +48,6 @@ class Project(Protocol):
             case {"tool": {"uv-runner": {"tasks": {**tasks}}}}:
                 return cast(Mapping[str, Any], tasks)
         return {}
-
-    def sync(self) -> None:
-        subprocess.run(['uv', 'sync', '--directory', self.root, '--frozen', '--inexact'])
 
     @property
     def root(self) -> Path: ...

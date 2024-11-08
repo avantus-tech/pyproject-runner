@@ -36,8 +36,6 @@ def main(command: tuple[str, ...], do_list: bool, project_path: Path | None, sho
     if do_list or not command:
         list_tasks(project, True)
         exit(0)
-    if project.managed:
-        project.sync()
     name, *args = command
     try:
         task = project.task(name)
@@ -51,7 +49,6 @@ def show_project(project: _project.PyProject) -> None:
         f'project: {project.name}',
         f'path: {project.root}',
         f'venv: {project.venv_path}',
-        f'managed: {str(project.managed).lower()}',
     ]))
     workspace = project.workspace
     if workspace:
