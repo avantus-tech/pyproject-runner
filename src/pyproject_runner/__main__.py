@@ -16,18 +16,18 @@ from . import _tasks
 )
 @click.option('-l', '--list', 'do_list', is_flag=True, default=False,
               help="List tasks.")
-@click.option("--pyproject", metavar="PATH",
+@click.option("--project", 'project_path', metavar="PATH",
               type=click.Path(exists=True, dir_okay=True, resolve_path=True, path_type=Path),
               help="Use this pyproject.toml file or directory.")
 @click.option('--show', is_flag=True, default=False,
               help='Show project information and exit.')
 @click.argument('command', metavar="[COMMAND]", nargs=-1)
-def main(command: tuple[str, ...], do_list: bool, pyproject: Path | None, show: bool) -> None:
+def main(command: tuple[str, ...], do_list: bool, project_path: Path | None, show: bool) -> None:
     """Runs a configured task or a script installed for this package."""
-    if pyproject and pyproject.is_file():
-        project: _project.PyProject | None = _project.PyProject.load(pyproject)
+    if project_path and project_path.is_file():
+        project: _project.PyProject | None = _project.PyProject.load(project_path)
     else:
-        project = _project.PyProject.discover(pyproject or Path().resolve())
+        project = _project.PyProject.discover(project_path or Path().resolve())
     if project is None:
         _error('did not find pyproject.toml')
     if show:
@@ -40,8 +40,9 @@ def main(command: tuple[str, ...], do_list: bool, pyproject: Path | None, show: 
         project.sync()
     name, *args = command
     try:
-        exit(_tasks.run_task(project, name, args))
-    except _tasks.RunError as exc:
+        task = project.task(name)
+        exit(task.run(args, project))
+    except _project.TaskLookupError as exc:
         _error(str(exc))
 
 
@@ -65,9 +66,9 @@ def show_project(project: _project.PyProject) -> None:
 
 
 def list_tasks(project: _project.PyProject, include_external: bool) -> None:
-    tasks: list[tuple[str, _tasks.TaskType | None]] = list(project.iter_tasks())
+    tasks: list[tuple[str, _tasks.Task | None]] = list(project.iter_tasks())
     if include_external:
-        tasks += [(name, None) for name in _tasks.external_scripts(project.venv_bin_path)]
+        tasks += [(name, None) for name in _project.external_scripts(project.venv_bin_path)]
     tasks.sort(key=lambda c: (c[0], c[1] is None))
     for name, task in tasks:
         if task is None:

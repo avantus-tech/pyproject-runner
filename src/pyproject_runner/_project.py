@@ -1,16 +1,3 @@
-
-# TODO additional features
-# - [ ] Command groups (to group commands, similar to click)
-# - [ ] Markers for platform-specific commands (e.g., sys.platform == 'win32')
-# - [ ] Include tasks from parent workspace
-# - [ ] Maybe allow passing arguments to subcommands of chain commands?
-# - [ ] Task aliases
-# - [ ] Add option to show task help
-# - [ ] Shell completion
-# - [ ] Define environment variables in [tool.uv-runner.environment]?
-# - [ ] Environment variable expansion in commands?
-# - [ ] Add a command to create shims to rr tasks
-
 from __future__ import annotations
 
 import os
@@ -24,10 +11,14 @@ else:
     import tomllib
 from typing import Any, cast, Final, Iterator, Mapping, Protocol, Sequence
 
-from . import _tasks
+from ._tasks import Task
 
 
 VENV_BIN: Final = "Scripts" if sys.platform == "win32" else "bin"
+
+
+class TaskLookupError(LookupError):
+    pass
 
 
 class Project(Protocol):
@@ -39,23 +30,24 @@ class Project(Protocol):
         match self.doc:
             case {"tool": {"uv": {"managed": bool(is_managed)}}}:
                 return is_managed
-            case {"tool": {"uv": _}}:
-                return True
-        return False
+        return True
 
-    def task(self, name: str) -> _tasks.TaskType | None:
+    def task(self, name: str) -> Task:
         tasks = self._tasks()
         entry = tasks.get(name)
-        if entry is None:
+        if entry:
+            task = Task.parse(entry)
+            if task.cmd or task.pre_tasks or task.post_tasks:
+                return task
+        else:
             executable = shutil.which(name, path=self.venv_bin_path)
-            if executable and not _tasks.is_unsafe_script(Path(executable)):
-                return _tasks.External(name, executable)
-            return None
-        return _tasks.parse_task(entry)
+            if executable and not is_unsafe_script(Path(executable)):
+                return Task(name, executable=executable)
+        raise TaskLookupError(f'{name!r} is an invalid or unknown task')
 
-    def iter_tasks(self) -> Iterator[tuple[str, _tasks.TaskType]]:
+    def iter_tasks(self) -> Iterator[tuple[str, Task]]:
         for name, entry in self._tasks().items():
-            task = _tasks.parse_task(entry)
+            task = Task.parse(entry)
             if task is not None:
                 yield name, task
 
@@ -207,3 +199,21 @@ class Workspace(Project):
                 exclude = set()
         members = tuple(m for m in members if m not in exclude)
         return cls(project.name, project.root, project.doc, members)
+
+
+if sys.platform == 'win32':
+    def external_scripts(path: Path) -> Iterator[str]:
+        return (path.stem for path in path.iterdir()
+                if path.is_file() and path.suffix.lower() in ('.exe', '.bat')
+                and not is_unsafe_script(path))
+
+    def is_unsafe_script(path: Path) -> bool:
+        return path.stem in {'activate', 'deactivate'}
+else:
+    def external_scripts(path: Path) -> Iterator[str]:
+        return (path.name for path in path.iterdir()
+                if path.is_file() and os.access(path, os.X_OK)
+                and not is_unsafe_script(path))
+
+    def is_unsafe_script(path: Path) -> bool:
+        return path.suffix in ('.dylib', '.so')

@@ -23,7 +23,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Build Tools",
-    "Typing :: Typed",
 ]
 
 [project.scripts]
@@ -35,7 +34,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "mypy ~= 1.11.1",
+    "mypy~=1.11.1",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -62,3 +61,6 @@ strict = true
 version = { call = "builtins:print(__import__('sys').version)" }
 version-cmd = { cmd = ["python", "-c", "builtins:print(__import__('sys').version)"] }
 version-chain = { chain = ["version-cmd", "noop"]}
+
+[tool.uv.workspace]
+members = ["shim"]

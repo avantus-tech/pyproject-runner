@@ -1,50 +1,83 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+import pathlib
+import re
 import shlex
 import subprocess
 import sys
-from typing import Any, cast, Final, Iterator, Mapping, Sequence
+from typing import Any, Final, Mapping, overload, Sequence
 
 from . import environment
 from . import _project
 
 
-class RunError(Exception):
-    pass
+# Paths are manipulated as strings using os.path, rather than pathlib, because a leading ./ is
+# significant, and pathlib removes them when normalizing. This is especially important in commands
+# as the leading ./ is needed to execute commands in the current directory.
+
+SEP: Final = r'[\\/]' if sys.platform == 'win32' else '/'
+ROOT_TEST: Final = re.compile(rf'^!(?:{SEP}|$)')
 
 
-class _Base:
-    __slots__ = 'cwd', 'env', 'env_file', 'help'
-    __match_args__ = 'cwd', 'env', 'env_file', 'help'
+def build_path(path: str | None, parent: str | pathlib.Path) -> str | None:
+    """Perform common path manipulations.
 
-    def __init__(self, cwd: str | None = None, env: str | Mapping[str, str] | None = None,
-                 env_file: str | None = None, help: str | None = None) -> None:
+    If path is empty or None, return None. If it starts with a bang (!), return
+    the path relative to the parent. Otherwise, just return the path.
+    """
+    if not path:
+        return None
+    elif match := ROOT_TEST.match(path):
+        return os.path.join(parent, path[match.regs[0][1]:])
+    return path
+
+
+class Task:
+    __slots__ = 'cmd', 'cwd', 'env', 'env_file', 'help', 'executable', 'pre_tasks', 'post_tasks'
+
+    @overload
+    def __init__(self, cmd: str, *, executable: str) -> None: ...
+    @overload
+    def __init__(self, cmd: str | Sequence[str] | None, *, cwd: str | None = None,
+                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
+                 help: str | None = None, pre_tasks: Sequence[str] | None = None,
+                 post_tasks: Sequence[str] | None = None) -> None: ...
+
+    def __init__(self, cmd: str | Sequence[str] | None, *, cwd: str | None = None,
+                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
+                 help: str | None = None, executable: str | None = None,
+                 pre_tasks: Sequence[str] | None = None,
+                 post_tasks: Sequence[str] | None = None) -> None:
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+        self.cmd: Final = tuple(cmd) if cmd else None
         self.cwd: Final = cwd
         self.env: Final = env
         self.env_file: Final = env_file
         self.help: Final = help
+        self.executable: Final = executable
+        self.pre_tasks: Final = tuple(pre_tasks) if pre_tasks else ()
+        self.post_tasks: Final = tuple(post_tasks) if post_tasks else ()
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, self.__class__) and
-                self.cwd == other.cwd and self.env == other.env and
-                self.env_file == other.env_file and self.help == other.help)
+                all(getattr(self, name) == getattr(other, name) for name in self.__slots__))
+
+    def __bool__(self) -> bool:
+        return not not (self.cmd or self.pre_tasks or self.post_tasks)
 
     def __repr__(self) -> str:
-        args = self._format_args()
-        return f'{self.__class__.__module__}.{self.__class__.__qualname__}({args})'
-
-    def _format_args(self) -> str:
-        return f'cwd={self.cwd!r}, env={self.env!r}, env_file={self.env_file!r}, help={self.help!r}'
+        args = []
+        for name in self.__slots__:
+            value = getattr(self, name)
+            if value is not None:
+                args.append(f'{name}={getattr(self, name)!r}')
+        return f'{self.__class__.__module__}.{self.__class__.__qualname__}({", ".join(args)})'
 
     def to_dict(self) -> dict[str, Any]:
-        return {key: value for key, value in [
-            ('cwd', self.cwd),
-            ('env', self.env),
-            ('env-file', self.env_file),
-            ('help', self.help),
-        ] if value is not None}
+        return {name: value for name in self.__slots__
+                if (value := getattr(self, name)) is not None}
 
     def _get_environment(self, project: _project.PyProject) -> dict[str, str]:
         env = os.environ.copy()
@@ -67,193 +100,114 @@ class _Base:
             env = environment.expand(self.env, env)
         elif self.env:
             env.update(self.env)
-        if self.env_file:
-            env_path = Path(self.env_file)
-            if not env_path.is_absolute():
-                env_path = project.root / env_path
-            env = environment.expand(env_path.read_text('utf-8'), env)
+        env_path = build_path(self.env_file, project.root)
+        if env_path:
+            with open(env_path, encoding='utf-8') as file:
+                text = file.read()
+            env = environment.expand(text, env)
         env.pop('PYTHONHOME', None)
         return env
 
-    def _run(self, args: Sequence[str | Path], project: _project.PyProject, *,
-             executable: str | os.PathLike[str] | None = None) -> int:
-        if executable is None:
-            exe = str(args[0])
-            # pathlib is not used here because it drops './' from paths
-            if os.sep in exe and not os.path.isabs(exe):
-                args = [project.root / exe, *args[1:]]
-        if self.cwd and not os.path.isabs(self.cwd):
-            cwd: str | Path | None = project.root / self.cwd
+    def run(self, args: Sequence[str], project: _project.PyProject) -> int:
+        # Look up tasks before attempting to run them
+        pre_tasks = [project.task(name) for name in self.pre_tasks] if self.pre_tasks else None
+        post_tasks = [project.task(name) for name in self.post_tasks] if self.post_tasks else None
+
+        # Execute pre-tasks, then this task, followed by post-tasks, stopping on any error
+        returncode = 0
+        if pre_tasks:
+            returncode = self._run_tasks(pre_tasks, project)
+        if not returncode and self.cmd:
+            returncode = self._run(args, project)
+        if post_tasks and not returncode:
+            returncode = self._run_tasks(post_tasks, project)
+        return returncode
+
+    def _run(self, args: Sequence[str], project: _project.PyProject) -> int:
+        assert self.cmd
+        if self.executable:
+            args = [*self.cmd, *args]
         else:
-            cwd = self.cwd
+            exe, *args = args
+            path = build_path(exe, project.root)
+            assert path
+            args = [path, *args]
+        cwd = build_path(self.cwd, project.root)
         env = self._get_environment(project)
-        return subprocess.run(args, cwd=cwd, env=env, executable=executable).returncode
+        return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode
 
-
-class Cmd(_Base):
-    __slots__ = 'cmd',
-    __match_args__ = 'cmd', 'cwd', 'env', 'env_file', 'help'
-
-    def __init__(self, cmd: str | Sequence[str], cwd: str | None = None,
-                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
-                 help: str | None = None) -> None:
-        if isinstance(cmd, str):
-            cmd = shlex.split(cmd)
-        self.cmd: Final = tuple(cmd)
-        super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
-
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.cmd == other.cmd and super().__eq__(other))
-
-    def _format_args(self) -> str:
-        return f'cmd={self.cmd!r}, {super()._format_args()}'
-
-    def to_dict(self) -> dict[str, Any]:
-        return {'cmd': self.cmd} | super().to_dict()
-
-    def run(self, args: Sequence[str | Path], project: _project.PyProject) -> int:
-        return super()._run([*self.cmd, *args], project)
-
-
-class Chain(_Base):
-    __slots__ = 'chain',
-    __match_args__ = 'chain', 'cwd', 'env', 'env_file', 'help'
-
-    def __init__(self, chain: Sequence[str], cwd: str | None = None,
-                 env: str | Mapping[str, str] | None = None, env_file: str | None = None,
-                 help: str | None = None) -> None:
-        self.chain: Final = tuple(chain)
-        super().__init__(cwd=cwd, env=env, env_file=env_file, help=help)
-
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.chain == other.chain and super().__eq__(other))
-
-    def _format_args(self) -> str:
-        return f'chain={self.chain!r}, {super()._format_args()}'
-
-    def to_dict(self) -> dict[str, Any]:
-        return {'chain': self.chain} | super().to_dict()
-
-    def run(self, args: Sequence[str | Path], project: _project.PyProject) -> int:
-        if args:
-            raise RunError('extra arguments to chained commands are not allowed')
-        for name in self.chain:
-            returncode = run_task(project, name, ())
+    @staticmethod
+    def _run_tasks(tasks: Sequence[Task], project: _project.PyProject) -> int:
+        for task in tasks:
+            returncode = task.run((), project)
             if returncode:
                 return returncode
         return 0
 
+    @classmethod
+    def parse(cls, entry: str | Sequence[str] | Mapping[str, Any]) -> Task:
+        cmd: str | list[str] | None
+        match entry:
+            case str(cmd) if cmd := cmd.strip():
+                return Task(cmd)
+            case [*cmd] if cmd and all(isinstance(s, str) for s in cmd) and (name := cmd[0].strip()):
+                cmd[0] = name
+                return Task(cmd)
+            case {"cmd": str(cmd)} if cmd := cmd.strip():
+                pass
+            case {"cmd": [*cmd]} if cmd and all(isinstance(v, str) for v in cmd) and (name := cmd[0].strip()):
+                cmd[0] = name
+            case _:
+                cmd = None
 
-class External(_Base):
-    __slots__ = 'cmd', 'executable'
-    __match_args__ = 'cmd', 'executable'
+        # Match options
+        cwd: str | None = None
+        env_file: str | None = None
+        env: str | dict[str, str] | None = None
+        if cmd:
+            match entry:
+                case {"cwd": str(cwd)} if cwd := cwd.strip():
+                    pass
+                case _:
+                    cwd = None
 
-    def __init__(self, cmd: str, executable: str | Path) -> None:
-        self.cmd: Final = cmd
-        self.executable: Final = executable
-        super().__init__()
+            match entry:
+                case {"env": str(env)} if env := env.strip():
+                    pass
+                case {"env": {**table}} if env := {k: v for k, v in table.items()
+                                                   if isinstance(k, str) and isinstance(v, str)}:
+                    pass
+                case _:
+                    env = None
 
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.cmd == other.cmd)
+            match entry:
+                case {"env-file": str(env_file)} if env_file := env_file.strip():
+                    pass
+                case _:
+                    env_file = None
 
-    def _format_args(self) -> str:
-        return f'cmd={self.cmd!r}'
+        help: str | None
+        match entry:
+            case {"help": str(help)} if help := help.strip():
+                pass
+            case _:
+                help = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {}
+        pre_tasks: list[str] | None
+        match entry:
+            case {"pre": [*pre_tasks]} if pre_tasks and all(
+                    isinstance(v, str) for v in pre_tasks):
+                pass
+            case _:
+                pre_tasks = None
 
-    def run(self, args: Sequence[str | Path], project: _project.PyProject) -> int:
-        return super()._run([self.cmd, *args], project, executable=self.executable)
+        post_tasks: list[str] | None
+        match entry:
+            case {"post": [*post_tasks]} if post_tasks and all(
+                    isinstance(v, str) for v in post_tasks):
+                pass
+            case _:
+                post_tasks = None
 
-
-TaskType = Cmd | Chain | External
-
-
-if sys.platform == 'win32':
-    def external_scripts(path: Path) -> Iterator[str]:
-        return (path.stem for path in path.iterdir()
-                if path.is_file() and path.suffix.lower() in ('.exe', '.bat')
-                and not is_unsafe_script(path))
-
-    def is_unsafe_script(path: Path) -> bool:
-        return path.stem in {'activate', 'deactivate'}
-else:
-    def external_scripts(path: Path) -> Iterator[str]:
-        return (path.name for path in path.iterdir()
-                if path.is_file() and os.access(path, os.X_OK)
-                and not is_unsafe_script(path))
-
-    def is_unsafe_script(path: Path) -> bool:
-        return path.suffix == '.dylib'
-
-
-def parse_task(entry: str | Sequence[str] | Mapping[str, Any]) -> TaskType | None:
-    # Match the task type for non-dict-based tasks
-    match entry:
-        case str(cmd) if cmd := cmd.strip():
-            return Cmd(cmd)
-        case [*cmd] if cmd and all(isinstance(s, str) for s in cmd) and cmd[0].strip():
-            cmd[0] = cmd[0].strip()
-            return Cmd(cmd)
-        case {}:
-            pass  # dict-based tasks are handled below
-        case _:
-            return None
-
-    # Match options
-    cwd: str | None
-    match entry:
-        case {"cwd": str(cwd)} if cwd:
-            pass
-        case _:
-            cwd = None
-
-    env: str | Mapping[str, str] | None
-    match entry:
-        case {"env": str(env)} if env := str(env).strip():
-            pass
-        case {"env": {**table}} if table and all(isinstance(v, str) for v in table.values()):
-            env = cast(Mapping[str, str], table)
-        case _:
-            env = None
-
-    env_file: str | None
-    match entry:
-        case {"env-file": str(env_file)} if env_file:
-            pass
-        case _:
-            env_file = None
-
-    help: str | None
-    match entry:
-        case {"help": str(help)} if help:
-            pass
-        case _:
-            help = None
-
-    # Match the task type
-    string: str
-    seq: Sequence[str]
-    match entry:
-        case {"chain": [*seq]} if seq and all(isinstance(v, str) for v in seq) and (seq := [v for v in seq if v]):
-            return Chain(seq, cwd=cwd, env=env, env_file=env_file, help=help)
-        case {"cmd": str(string)} if string := string.strip():
-            try:
-                seq = shlex.split(string)
-            except ValueError:
-                return None
-            return Cmd(seq, cwd=cwd, env=env, env_file=env_file, help=help)
-        case {"cmd": [str(string), *seq]} if all(isinstance(v, str) for v in seq) and (string := string.strip()):
-            return Cmd([string, *seq], cwd=cwd, env=env, env_file=env_file, help=help)
-
-    return None
-
-
-def run_task(project: _project.PyProject, name: str, args: Sequence[str]) -> int:
-    task = project.task(name)
-    if task is None:
-        raise RunError(f'invalid or unknown task {name!r}')
-    return task.run(args, project)
+        return cls(cmd, cwd=cwd, env=env, env_file=env_file, help=help,
+                   pre_tasks=pre_tasks, post_tasks=post_tasks)

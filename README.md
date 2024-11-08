@@ -4,11 +4,13 @@ pyproject-runner provides a simple, project-oriented method of defining develope
 a simple task runner, similar to [taskipy](https://pypi.org/project/taskipy/) or [Poe the Poet](https://pypi.org/project/poethepoet/), for running tasks defined
 in a *pyproject.toml* file.
 
-Inspired by the [Rye's run command](https://rye.astral.sh/guide/commands/run/), pyproject-runner can be used as an almost-drop-in replacement
-for `rye run`. While pyproject-runner is designed to be used with [uv](https://docs.astral.sh/uv/), it may also be used with
-projects not utilizing uv. It was initially created to experiment with new features for `rye run`,
-but it is now intended as a replacement for it as development on Rye has ceased. uv is taking Rye's
-place and currently lacks a task runner feature.
+While pyproject-runner is best used with [uv](https://docs.astral.sh/uv/), it does not require it, and can benefit any
+project wishing to define common developer tasks.
+
+Inspired by [Rye's run command](https://rye.astral.sh/guide/commands/run/), pyproject-runner will feel familiar to those who have used
+`rye run`. Switching from Rye to uv with pyproject-runner requires only a few changes to the
+*pyproject.toml* file. See [differences from `rye run`](#differences-from-rye-run) below for more
+information.
 
 
 ## Installation
@@ -16,23 +18,39 @@ place and currently lacks a task runner feature.
 Install pyproject-runner with uv or pip:
 
 ```console
-# Install as a global tool using uv:
-$ uv tool install pyproject-runner
-
-# Install in a pyproject-managed virtualenv:
+# Install in a uv-managed virtualenv:
 $ uv pip install pyproject-runner
 
-# Install using pip:
+# Or install using pip:
 $ pip install pyproject-runner
 ```
 
-This installs the pyproject-runner package along with the `rr` script that is used to execute tasks. When
-using pyproject-runner with uv, it is best to install it using the first method so that tasks can be run
-by directly calling `rr` rather than the more verbose `uv run rr`.
+### Using with uv-managed projects
+
+Add pyproject-runner to the *dev* group of the project's *pyproject.toml* file, and it will be
+automatically installed when uv syncs the virtual environment:
+
+```console
+$ uv add --dev pyproject-runner
+```
+
+Or add it manually:
+
+```toml
+[dependency-groups]
+dev = [
+    "pyproject-runner",
+]
+```
+
+It is also recommended to install [pyproject-runner-shim](shim/README.md), which provides a shortcut for
+running tasks. uv doesn't recommend activating virtual environments, but suggests using `uv run`
+to execute scripts in the virtual environment. The shim allows shortening
+`uv run rr TASK ...` to `rr TASK ...` saving valuable keystrokes.
 
 ### Requirements
 pyproject-runner requires Python 3.10 or higher because it makes use of [structural pattern matching](https://docs.python.org/3/reference/compound_stmts.html#the-match-statement)
-for parsing the pyproject.toml file.
+when parsing the *pyproject.toml* file.
 
 
 ## Usage
@@ -42,12 +60,12 @@ Define tasks in the *pyproject.toml* file:
 ```toml
 [tool.pyproject-runner.tasks]
 devserver = "flask run --app ./hello.py --debug"
-http = { cmd = ["python", "-mhttp.server", "8000"] }
-lint = { chain = ["lint:black", "lint:flake8" ] }
-"lint:black" = "uvx black --check src"
+http = { cmd = ["python", "-mhttp.server", "8000"] , help = "Start a web server for the project." }
+check = { pre = ["mypy", "lint"], cmd = "pytest", post = ["uv build"] }
+lint = { pre = ["lint:ruff", "lint:flake8"] }
 "lint:flake8" = "uvx flake8 src"
 "lint:ruff" = "uvx ruff check src"
-ci = "uv run scripts/ci-build.py"  # run script in managed venv using inline script metadata
+ci = "uv run scripts/ci-build.py"  # run script in uv-managed venv using inline script metadata
 ```
 
 Then execute the tasks using the `rr` command:
@@ -59,10 +77,13 @@ $ rr devserver
 $ rr lint:ruff --show-fixes --statistics
 ```
 
+**Note:** In a uv-managed project without pyproject-runner-shim installed, it is necessary to
+prefix the `rr` command with `uv run` if the virtual environment is not activated.
+
 
 ## Configuration
 
-Tasks are configured in the `tool.pyproject-runner-tasks` table in the `pyproject.toml` file.
+Tasks are configured in the `tool.pyproject-runner.tasks` table in the *pyproject.toml* file.
 
 ### `tool.pyproject-runner.tasks`
 
@@ -78,16 +99,13 @@ devserver-alt = ["flask", "run", "--app", "./hello.py", "--debug"]
 devserver-explicit = { cmd = "flask run --app ./hello.py --debug" }
 ```
 
-Using a table allows for additional configuration using following keys:
+Using a table allows for additional configuration using the keys below. Tasks must define at least
+one of `cmd`, `pre`, or `post`.
 
 #### `cmd`
 
 The command to execute. This is either a `string` or an `array` of arguments. It is executed
-directly without a shell, so shell-specific semantics are not directly supported. If the command
-contains no path separator (`/` on POSIX or `\` on Windows), the command will first be searched for
-in the virtualenv scripts directory, followed by directories in the *PATH* environment variable. If
-the command path is absolute, the absolute path will be used. Relative command paths are found
-relative to the directory containing the *pyproject.toml* file.
+directly without a shell, so shell-specific semantics are not directly supported.
 
 ```toml
 [tool.pyproject-runner.tasks]
@@ -95,36 +113,38 @@ devserver = { cmd = "flask run --app ./hello.py --debug" }
 http = { cmd = ["python", "-mhttp.server", "8000"] }
 ```
 
-#### `chain`
+#### `pre` and `post`
 
-This is a special key that can be used instead of `cmd` to make a task invoke multiple other tasks.
-The value is an *array* of task names that will be executed in order, one after another, stopping
-after all are complete or when a task fails. All other keys below are ignored by `chain` tasks.
+These keys can be used with or instead of `cmd` to invoke one or more tasks along with or instead
+of `cmd`. The value of each is an *array* of task names that will be sequentially executed in order
+stopping after all are complete or when a task fails. All other keys below, except `help`, are only
+used with `cmd`, if it is given. `pre` lists tasks that will run before `cmd`, and `post` lists
+tasks that will run afterward.
 
 ```toml
 [tool.pyproject-runner.tasks]
-lint = { chain = ["lint:black", "lint:flake8" ] }
-"lint:black" = "black --check src"
-"lint:flake8" = "flake8 src"
+check = { pre = ["mypy", "lint"], cmd = "pytest", post = ["uv build"] }
+lint = { pre = ["lint:ruff", "lint:flake8"] }
+"lint:flake8" = "uvx flake8 src"
+"lint:ruff" = "uvx ruff check src"
 ```
 
 #### `cwd`
 
 Commands execute in the current directory by default. Set `cwd` to a *string* to change the working
-directory before executing the command. Unless the path is absolute, it is considered relative to
-the directory containing the *pyproject.toml* file. The initial working directory is saved in the
-*INITIAL_DIR* environment variable.
+directory before executing the command. The initial working directory is saved in the *INITIAL_DIR*
+environment variable.  See [Paths](#paths) below for more information.
 
 ```toml
 [tool.pyproject-runner.tasks]
-# Make sure tool can execute from subdirectories in the project
-tool = { cmd = "uv run tools/tool.py", cwd = "." }
+# Ensure tool can execute from subdirectories in the project
+tool = { cmd = "uv run tools/tool.py", cwd = "!" }
 ```
 
 #### `env`
 
-This key can be used to set environment variables before executing a task. It can be a *table* or a
-*string*. If a *string* is provided, the value is processed as if read from a file like
+This key is used to set environment variables before executing a task. It can be a *table* or a
+*string*. If a *string* is provided, the value is processed as if read from a file, like
 [`env-file`](#env-file) below.
 
 ```toml
@@ -139,12 +159,11 @@ WEB_ROOT=$HOME/Public
 #### `env-file`
 
 This is similar to `env` above, but it reads environment variables from a file rather than setting
-them directly. Unless the path is absolute, the file is found relative to the directory containing
-the *pyproject.toml* file. See [Environment file syntax](#environment-file-syntax) below.
+them directly. See [Environment file syntax](#environment-file-syntax) and [Paths](#paths) below.
 
 ```toml
 [tool.pyproject-runner.tasks]
-devserver = { cmd = "flask run --debug", env-file = ".dev.env" }
+devserver = { cmd = "flask run --debug", env-file = "!/.dev.env" }
 ```
 
 #### `help`
@@ -157,31 +176,16 @@ can be parsed by other tools to display help.
 devserver = { cmd = "flask run --app ./hello.py --debug", help = "Start a development server in debug mode" }
 ```
 
-### Execution environment
+### `tool.uv.managed`
 
-Several environment variables are set before executing tasks or processing `env-file` files. Paths
-are absolute unless otherwise specified.
+pyproject-runner assumes the project is managed by uv unless `tool.uv.managed` is `false`. Set this
+for projects not being managed by uv to avoid auto synchronization of the virtual environment when
+tasks are run.
 
-VIRTUAL_ENV
-: Root of the project's virtual environment.
-
-VIRTUAL_ENV_BIN
-: Directory in the project's virtual environment containing the python executable and scripts.
-
-INITIAL_DIR
-: Current working directory when pyproject-runner was executed.
-
-PROJECT_DIR
-: Directory where the *pyproject.toml* file was found.
-
-WORKSPACE_DIR
-: Workspace root, if the project is part of a workspace; otherwise it is unset.
-
-PATH
-: Set or modified so that `$VIRTUAL_ENV_BIN` is the first path.
-
-Also, `PYTHONHOME` is removed from the environment if it is set.
-
+```toml
+[tool.uv]
+managed = false
+```
 
 ### Environment file syntax
 
@@ -227,16 +231,65 @@ PATH = '/home/user/pyproject-runner/scripts:/home/user/pyproject-runner/.venv/bi
 other_var = 'quotes preserve\nnewlines and tabs '
 ```
 
+### Paths
+
+Paths beginning with a bang atom (!) are considered relative to the project root, that is the
+directory containing the *pyproject.toml* file. Otherwise, paths are treated normally: absolute
+paths are absolute and relative paths are considered relative to the current working directory,
+unless stated otherwise. This applies to commands, but not command arguments, and to `cwd` and
+`env-file`.
+
+So, if the *pyproject.toml* file is in `/user/project`, and the current working directory is
+`/usr/project/src/package`, then paths are translated as follows:
+
+| Given Path     | Effective Path                |
+|----------------|-------------------------------|
+| !              | /user/project                 |
+| !/             | /user/project                 |
+| !/..           | /user                         |
+| !/scripts/lint | /user/project/scripts/lint    |
+| foo            | /user/project/src/package/foo |
+| ./foo          | /user/project/src/package/foo |
+| ..             | /user/project/src             |
+| ../bar         | /user/project/src/bar         |
+| /usr/bin/mypy  | /usr/bin/mypy                 |
+
+
+## Execution environment
+
+Several environment variables are set before executing tasks or processing `env-file` files. Paths
+are absolute unless otherwise specified.
+
+VIRTUAL_ENV
+: Root of the project's virtual environment.
+
+VIRTUAL_ENV_BIN
+: Directory in the project's virtual environment containing the python executable and scripts.
+
+INITIAL_DIR
+: Current working directory when pyproject-runner was executed.
+
+PROJECT_DIR
+: Directory where the *pyproject.toml* file was found.
+
+WORKSPACE_DIR
+: Workspace root, if the project is part of a workspace; otherwise it is unset.
+
+PATH
+: Set or modified so that `$VIRTUAL_ENV_BIN` is the first path.
+
+`PYTHONHOME` is removed from the environment, if it is set.
+
 
 ## Differences from `rye run`
 
-While pyproject-runner started as a feature-parity re-implementation of `rye run` (hence the `rr` script
-name), it was also intended as a project to experiment with new features and fixing problems with
-`rye run`. It was never intended that it would maintain feature-parity forever. This is especially
-true now that development of Rye has stopped. Here are some of the differences for those coming to
-pyproject-runner from Rye.
+While pyproject-runner started as a feature-parity re-implementation of `rye run` (hence the `rr`
+script name), it was also intended as a project to experiment with new features and fixing problems
+with `rye run`. It was never intended that it would maintain feature-parity. This is especially
+true now that development of Rye has stopped. Here are some of the key differences for those coming
+to pyproject-runner from Rye.
 
-#### Call task type is unsupported
+### Call task type is unsupported
 
 The `call` task type, supported by `rye run`, is *not* supported by pyproject-runner because it is merely
 shorthand for calling python, and is easily reproduced:
@@ -251,29 +304,51 @@ help = { cmd = "python -c help()" }
 hello-world = ["python", "-c", "print('Hello World!')"]
 ```
 
-#### Relative task commands
+### Task chains
 
-Task commands containing path separators are found relative to the directory containing the
-*pyproject.toml* file, while `rye run` tries to find scripts relative to the current working
-directory.
+With Rye, task chains use the `chain` command type, which suffer from the limitation that none of
+the tasks in the chain can be passed options or arguments. In pyproject-runner, chains are
+supported by providing `pre` and/or `post` tasks. This is a bit more powerful because they can be
+provided along with `cmd`, where the command can consume arguments. Or use them without `cmd` to
+mimic Rye's chains.
+
+```toml
+[tool.pyproject-runner.tasks]
+# lint = { chain = ["lint:ruff", "lint:flake8"] }  # Rye chain
+lint = { pre = ["lint:ruff", "lint:flake8"] }  # pyproject-runner chain
+"lint:ruff" = "uvx ruff check src"
+"lint:flake8" = "uvx flake8 src"
+```
+
+### Relative `env-file` paths
+
+Rye looks for relative `env-file` paths relative to the project root, while pyproject-runner
+searches for them relative to the current directory, unless prefixed with '!/'. See [Paths](#paths)
+for more information.
+
+### Tasks can mask scripts
+
+Tasks in pyproject-runner can have the same name as an installed script (i.e., to provide default
+arguments). Scripts take precedence over Rye tasks, making it impossible to create tasks with the
+same name.
 
 
 ## Future features
 
 Below is a list of features that might be implemented in the future (no guarantees on any of them).
 
- - [ ] Task groups (group tasks under common parent command, similar to click)
+ - [ ] Task groups (group tasks under a common parent command, like git or uv)
  - [ ] Markers for platform-specific commands, similar to Python requirements (e.g., `sys.platform == 'win32'`)
- - [ ] Run tasks in parent workspace from child project
- - [ ] Maybe allow passing arguments to tasks of chained tasks?
- - [ ] Task aliases
+ - [ ] Run tasks defined in parent workspace from child project (allow defining tasks common to the whole workspace)
+ - [ ] Task aliases? Short name matching?
  - [ ] Add option to show task help
  - [ ] Shell completion
  - [ ] Define common environment variables in [tool.pyproject-runner.environment]?
  - [ ] Environment variable expansion in task definitions
- - [ ] Add an option to create shims for tasks
+ - [ ] Add ability to create shims for tasks
 
 Do you have additional feature requests? Submit an issue or pull request.
+
 
 ## License
 
