@@ -1,0 +1,32 @@
+[project]
+name = "pyproject-runner-shim"
+version = "0.1.0"
+description = "Shim for pyproject-runner."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+license.file = "LICENSE.txt"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+]
+
+[project.scripts]
+"rr" = "rr:main"  # short for runner-run or run-runner
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = [
+    'rr.py'
+]
