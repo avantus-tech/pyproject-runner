@@ -1,10 +1,10 @@
+import json
 from pathlib import Path
 from typing import NoReturn, overload
 
 import click
 
 from . import _project
-from . import _tasks
 
 
 @click.command(
@@ -41,7 +41,10 @@ def main(command: tuple[str, ...], do_list: bool, project_path: Path | None, sho
         task = project.task(name)
         exit(task.run(args, project))
     except _project.TaskLookupError as exc:
-        _error(str(exc))
+        msg = str(exc)
+        if exc.__context__:
+            msg = f'{msg}: {exc.__context__}'
+        _error(msg)
 
 
 def show_project(project: _project.PyProject) -> None:
@@ -63,15 +66,21 @@ def show_project(project: _project.PyProject) -> None:
 
 
 def list_tasks(project: _project.PyProject, include_external: bool) -> None:
-    tasks: list[tuple[str, _tasks.Task | None]] = list(project.iter_tasks())
+    tasks: list[tuple[str, bool]] = [(name, False) for name in project.task_names]
     if include_external:
-        tasks += [(name, None) for name in _project.external_scripts(project.venv_bin_path)]
-    tasks.sort(key=lambda c: (c[0], c[1] is None))
-    for name, task in tasks:
-        if task is None:
+        tasks += [(name, True) for name in _project.external_scripts(project.venv_bin_path)]
+    tasks.sort()
+    for name, external in tasks:
+        if external:
             click.echo(name)
         else:
-            click.echo(f'{click.style(name, fg="cyan", bold=True)}  {click.style(task.to_dict(), fg="yellow")}')
+            try:
+                task = project.task(name)
+                definition = click.style(json.dumps(task.to_dict()), fg="yellow")
+            except _project.TaskLookupError as exc:
+                definition = click.style(str(exc.__context__ or exc), fg="red")
+            name = click.style(name, fg="cyan", bold=True)
+            click.echo(f'{name}  {definition}')
 
 
 @overload

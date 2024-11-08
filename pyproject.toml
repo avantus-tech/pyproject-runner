@@ -60,7 +60,7 @@ strict = true
 [tool.pyproject-runner.tasks]
 version = { call = "builtins:print(__import__('sys').version)" }
 version-cmd = { cmd = ["python", "-c", "builtins:print(__import__('sys').version)"] }
-version-chain = { chain = ["version-cmd", "noop"]}
+version-chain = { pre = ["version-cmd", "noop"]}
 
 [tool.uv.workspace]
 members = ["shim"]
