@@ -242,15 +242,17 @@ class Task:
     def __init__(self, cmd: str | Sequence[str] | None, *, cwd: str | None = None,
                  env: str | Mapping[str, str] | None = None,
                  env_file: str | Sequence[str] | None = None,
-                 help: str | None = None, pre: Sequence[str] | None = None,
-                 post: Sequence[str] | None = None) -> None: ...
+                 help: str | None = None,
+                 pre: Sequence[Sequence[str]] | None = None,
+                 post: Sequence[Sequence[str]] | None = None) -> None: ...
 
     def __init__(self, cmd: str | Sequence[str] | None, *, cwd: str | None = None,
                  env: str | Mapping[str, str] | None = None,
                  env_file: str | Sequence[str] | None = None,
-                 help: str | None = None, executable: str | None = None,
-                 pre: Sequence[str] | None = None,
-                 post: Sequence[str] | None = None) -> None:
+                 help: str | None = None,
+                 executable: str | None = None,
+                 pre: Sequence[Sequence[str]] | None = None,
+                 post: Sequence[Sequence[str]] | None = None) -> None:
         if isinstance(cmd, str):
             cmd = shlex.split(cmd)
         self.cmd: Final = tuple(cmd) if cmd else None
@@ -259,8 +261,8 @@ class Task:
         self.env_file: Final = env_file
         self.help: Final = help
         self.executable: Final = executable
-        self.pre: Final = tuple(pre) if pre else None
-        self.post: Final = tuple(post) if post else None
+        self.pre: Final = tuple(tuple(i) for i in pre) if pre else None
+        self.post: Final = tuple(tuple(i) for i in post) if post else None
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, self.__class__) and
@@ -323,11 +325,11 @@ class Task:
     def run(self, args: Sequence[str], project: PyProject) -> int:
         # Look up tasks before attempting to run them
         try:
-            pre_tasks = [project.task(name) for name in self.pre] if self.pre else None
+            pre_tasks = [(project.task(name), args) for name, *args in self.pre] if self.pre else None
         except TaskLookupError:
             raise TaskLookupError('pre task lookup failed')
         try:
-            post_tasks = [project.task(name) for name in self.post] if self.post else None
+            post_tasks = [(project.task(name), args) for name, *args in self.post] if self.post else None
         except TaskLookupError:
             raise TaskLookupError('post task lookup failed')
 
@@ -354,9 +356,9 @@ class Task:
         return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode
 
     @staticmethod
-    def _run_tasks(tasks: Sequence[Task], project: PyProject) -> int:
-        for task in tasks:
-            returncode = task.run((), project)
+    def _run_tasks(tasks: Sequence[tuple[Task, Sequence[str]]], project: PyProject) -> int:
+        for task, args in tasks:
+            returncode = task.run(args, project)
             if returncode:
                 return returncode
         return 0
@@ -421,16 +423,22 @@ class Task:
                 raise ValueError(f'invalid help value: {value!r}')
 
         match entry.get("pre"):
-            case [*pre_tasks] if pre_tasks and all(isinstance(v, str) and v and not v.isspace() for v in pre_tasks):
-                pass
+            case [*tasks]:
+                try:
+                    pre_tasks = cls._parse_tasks(tasks)
+                except ValueError as exc:
+                    raise ValueError(f'invalid pre task value: {exc}')
             case None as pre_tasks:
                 pass
             case value:
                 raise ValueError(f'invalid pre value: {value!r}')
 
         match entry.get("post"):
-            case [*post_tasks] if post_tasks and all(isinstance(v, str) and v and not v.isspace() for v in post_tasks):
-                pass
+            case [*tasks]:
+                try:
+                    post_tasks = cls._parse_tasks(tasks)
+                except ValueError as exc:
+                    raise ValueError(f'invalid post task value: {exc}')
             case None as post_tasks:
                 pass
             case value:
@@ -441,3 +449,18 @@ class Task:
 
         return cls(cmd, cwd=cwd, env=env, env_file=env_file, help=help,
                    pre=pre_tasks, post=post_tasks)
+
+    @staticmethod
+    def _parse_tasks(tasks: list[Any]) -> list[list[str]] | None:
+        name: str
+        args: list[str]
+        task_list: list[list[str]] = []
+        for task in tasks:
+            match task:
+                case str() if task and not task.isspace():
+                    task_list.append(shlex.split(task))
+                case [str(name), *args] if name and not name.isspace() and all(isinstance(a, str) for a in args):
+                    task_list.append(task)
+                case _:
+                    raise ValueError(repr(task))
+        return task_list or None

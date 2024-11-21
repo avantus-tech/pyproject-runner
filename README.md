@@ -43,12 +43,15 @@ dev = [
 ]
 ```
 
+### Convenience shim
+
 It is also recommended to install [pyproject-runner-shim](shim/README.md), which provides a shortcut for
 running tasks. uv doesn't recommend activating virtual environments, but suggests using `uv run`
 to execute scripts in the virtual environment. The shim allows shortening
 `uv run rr TASK ...` to `rr TASK ...` saving valuable keystrokes.
 
 ### Requirements
+
 pyproject-runner requires Python 3.10 or higher because it makes use of [structural pattern matching](https://docs.python.org/3/reference/compound_stmts.html#the-match-statement)
 when parsing the *pyproject.toml* file.
 
@@ -116,10 +119,12 @@ http = { cmd = ["python", "-mhttp.server", "8000"] }
 #### `pre` and `post`
 
 These keys can be used with or instead of `cmd` to invoke one or more tasks along with or instead
-of `cmd`. The value of each is an *array* of task names that will be sequentially executed in order
-stopping after all are complete or when a task fails. All other keys below, except `help`, are only
-used with `cmd`, if it is given. `pre` lists tasks that will run before `cmd`, and `post` lists
-tasks that will run afterward.
+of `cmd`. The value of each is an *array* of tasks, with optional arguments. Each task must be a
+string or an *array* of strings, similar to `cmd`, but the command is limited to tasks defined in
+the *pyproject.toml* file and to scripts installed in the virtual environment. Tasks will be
+executed sequentially until all are complete or a task fails. All other keys below, except `help`,
+are only used with `cmd`, if it is given. `pre` lists tasks that will run before `cmd`, and `post`
+lists tasks that will run afterward.
 
 ```toml
 [tool.pyproject-runner.tasks]
@@ -133,7 +138,7 @@ lint = { pre = ["lint:ruff", "lint:flake8"] }
 
 Commands execute in the current directory by default. Set `cwd` to a *string* to change the working
 directory before executing the command. The initial working directory is saved in the *INITIAL_DIR*
-environment variable.  See [Paths](#paths) below for more information.
+environment variable.  See [Paths](#paths) and [Execution environment](#execution-environment) below.
 
 ```toml
 [tool.pyproject-runner.tasks]
@@ -163,6 +168,7 @@ them directly. See [Environment file syntax](#environment-file-syntax) and [Path
 
 ```toml
 [tool.pyproject-runner.tasks]
+# Set the environment from a file in the project root
 devserver = { cmd = "flask run --debug", env-file = "!/.dev.env" }
 ```
 
@@ -224,12 +230,12 @@ other_var = 'quotes preserve\nnewlines and tabs '
 
 Paths beginning with a bang atom (!) are considered relative to the project root, that is the
 directory containing the *pyproject.toml* file. Otherwise, paths are treated normally: absolute
-paths are absolute and relative paths are considered relative to the current working directory,
-unless stated otherwise. This applies to commands, but not command arguments, and to `cwd` and
+paths are absolute, and relative paths are considered relative to the current working directory,
+unless stated otherwise. This applies to commands (but not command arguments), to `cwd`, and
 `env-file`.
 
 So, if the *pyproject.toml* file is in `/user/project`, and the current working directory is
-`/usr/project/src/package`, then paths are translated as follows:
+`/user/project/src/package`, then paths are translated as follows:
 
 | Given Path     | Effective Path                |
 |----------------|-------------------------------|
@@ -256,7 +262,7 @@ VIRTUAL_ENV_BIN
 : Directory in the project's virtual environment containing the python executable and scripts.
 
 INITIAL_DIR
-: Current working directory when pyproject-runner was executed.
+: Current working directory at the time pyproject-runner was executed.
 
 PROJECT_DIR
 : Directory where the *pyproject.toml* file was found.
