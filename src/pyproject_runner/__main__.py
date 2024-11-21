@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import NoReturn, overload
 
@@ -14,6 +15,8 @@ from . import _project
         'help_option_names': ['-h', '--help']
     },
 )
+@click.option('--color', type=click.Choice(['auto', 'always', 'never']), default=None,
+              help='Control colors in output.')
 @click.option('-l', '--list', 'do_list', is_flag=True, default=False,
               help="List tasks.")
 @click.option("--project", 'project_path', metavar="PATH",
@@ -22,8 +25,23 @@ from . import _project
 @click.option('--show', is_flag=True, default=False,
               help='Show project information and exit.')
 @click.argument('command', metavar="[COMMAND]", nargs=-1)
-def main(command: tuple[str, ...], do_list: bool, project_path: Path | None, show: bool) -> None:
+@click.pass_context
+def main(ctx: click.Context, command: tuple[str, ...], color: str | None,
+         do_list: bool, project_path: Path | None, show: bool) -> None:
     """Runs a configured task or a script installed for this package."""
+    match color:
+        case 'auto':
+            ctx.color = None
+        case 'always':
+            ctx.color = True
+        case 'never':
+            ctx.color = False
+        case _:
+            if os.environ.get('NO_COLOR'):
+                ctx.color = False
+            elif os.environ.get('FORCE_COLOR'):
+                ctx.color = True
+
     if project_path and project_path.is_file():
         project: _project.PyProject | None = _project.PyProject.load(project_path)
     else:
@@ -88,7 +106,7 @@ def _error(msg: str, exitcode: int = ...) -> NoReturn: ...
 @overload
 def _error(msg: str, exitcode: None) -> None: ...
 def _error(msg: str, exitcode: int | None = 1) -> NoReturn | None:
-    click.echo(f'{click.style("error", fg="red", bold=True)}: {msg}')
+    click.echo(f'{click.style("error", fg="red", bold=True)}: {msg}', err=True)
     if exitcode is not None:
         exit(exitcode)
     return None
