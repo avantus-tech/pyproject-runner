@@ -109,8 +109,10 @@ def main(ctx: click.Context, command: tuple[str, ...], color: str | None,
 
     if show_project:
         print_project(project)
-    elif do_list or not command:
-        print_tasks(project, not do_list)
+    elif do_list:
+        print_tasks(project)
+    elif not command:
+        print_tasks_and_scripts(project)
     else:
         name, *args = command
         try:
@@ -159,25 +161,33 @@ def print_project(project: _project.PyProject) -> None:
                     click.echo(f'    {line}')
 
 
-def print_tasks(project: _project.PyProject, include_external: bool) -> None:
+def print_tasks(project: _project.PyProject) -> None:
+    """Print tasks to stdout."""
+    items = []
+    for name in project.task_names:
+        try:
+            task = project.task(name)
+        except _project.TaskLookupError:
+            continue
+        else:
+            items.append((Styled(name, fg='cyan', bold=True), task.help or ''))
+    print_dl(items)
+
+
+def print_tasks_and_scripts(project: _project.PyProject) -> None:
     """Print tasks, and optionally scripts, to stdout."""
     tasks: list[tuple[str, bool]] = [(name, False) for name in project.task_names]
-    if include_external:
-        tasks += [(name, True) for name in _project.external_scripts(project.venv_bin_path)]
+    tasks += [(name, True) for name in _project.external_scripts(project.venv_bin_path)]
     tasks.sort()
 
-    items = []
     for name, is_external in tasks:
-        if is_external:
-            items.append((name, ''))
-        else:
+        marker = ' ' if is_external else click.style('+', fg='cyan')
+        if not is_external:
             try:
-                task = project.task(name)
+                project.task(name)
             except _project.TaskLookupError:
-                continue
-            else:
-                items.append((Styled(name, fg='cyan', bold=True), task.help or ''))
-    print_dl(items)
+                marker = click.style('E', fg='red')
+        click.echo(f'{marker} {name}')
 
 
 def print_dl(items: Sequence[tuple[str, str]],
