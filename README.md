@@ -174,8 +174,8 @@ devserver = { cmd = "flask run --debug", env-file = "!/.dev.env" }
 
 #### `help`
 
-A *string* with a help message describing what the task does. It is currently unused by `rr`, but
-can be parsed by other tools to display help.
+A *string* with a help message, describing what the task does, that will be printed with the task
+name when the `-l/--list` option is used. 
 
 ```toml
 [tool.pyproject-runner.tasks]
@@ -336,7 +336,7 @@ Below is a list of features that might be implemented in the future (no guarante
  - [ ] Markers for platform-specific commands, similar to Python requirements (e.g., `sys.platform == 'win32'`)
  - [ ] Run tasks defined in parent workspace from child project (allow defining tasks common to the whole workspace)
  - [ ] Task aliases? Short name matching?
- - [ ] Add option to show task help
+ - [x] Add option to show task help
  - [ ] Shell completion
  - [ ] Define common environment variables in [tool.pyproject-runner.environment]?
  - [ ] Environment variable expansion in task definitions

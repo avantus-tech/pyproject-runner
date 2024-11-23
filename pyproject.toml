@@ -59,7 +59,7 @@ strict = true
 
 [tool.pyproject-runner.tasks]
 version = { call = "builtins:print(__import__('sys').version)" }
-version-cmd = { cmd = ["python", "-c", "builtins:print(__import__('sys').version)"] }
+version-cmd = { cmd = ["python", "-c", "builtins:print(__import__('sys').version)"], help="This is a version command." }
 version-chain = { pre = ["version-cmd", "noop"]}
 
 [tool.uv.workspace]
