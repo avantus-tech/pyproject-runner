@@ -14,6 +14,15 @@ from . import _project
 
 
 class Styled(str):
+    """A string with click styling as metadata.
+
+    Used where click.style() might be used, but where the styling should
+    not be immediately applied because it adds unprintable characters
+    that change the length of the string, affecting formatting. This
+    class holds the desired styles and only applies them when __str__()
+    is called, thus the string length remains unchanged when calculating
+    the space required for the printed string.
+    """
     __slots__ = 'style',
 
     def __new__(cls, /, text: Any, **kwargs: Any) -> Styled:
@@ -39,8 +48,8 @@ class Styled(str):
         ) -> None:
             self.style: Final[Mapping[str, Any]] = {}
     else:
-        def __init__(self, /, text: str, **kwargs: Any) -> None:
-            self.style = kwargs
+        def __init__(self, /, text: str, **style: Any) -> None:
+            self.style = style
 
     def __repr__(self) -> str:
         args = [super().__repr__()]
@@ -60,6 +69,7 @@ class Styled(str):
 
     @classmethod
     def use_style(cls, text: str, from_style: str | Styled) -> str | Styled:
+        """Copy the style from one string to another."""
         if isinstance(from_style, Styled):
             return cls(text, **from_style.style)
         return text
@@ -126,6 +136,10 @@ def main(ctx: click.Context, command: tuple[str, ...], color: str | None,
 
 
 def print_project(project: _project.PyProject) -> None:
+    """Print key values read from pyproject.toml file.
+
+    This is useful for debugging tasks.
+    """
     print_dl([
         (Styled('name', bold=True), project.name),
         (Styled('root', bold=True), str(project.root)),
@@ -155,14 +169,14 @@ def print_project(project: _project.PyProject) -> None:
                 click.secho(f'    {exc.__context__ or exc}', fg='red')
             else:
                 # Normalize task to something that looks more like JSON.
-                # Basically, this turns tuples into lists.
+                # Basically, this turns tuples into lists, improving readability.
                 entry = json.loads(json.dumps(task.to_dict()))
                 for line in pprint.pformat(entry, width=width - 4, compact=True).splitlines():
                     click.echo(f'    {line}')
 
 
 def print_tasks(project: _project.PyProject) -> None:
-    """Print tasks to stdout."""
+    """Print tasks, with any associated help, to stdout."""
     items = []
     for name in project.task_names:
         try:
@@ -175,8 +189,14 @@ def print_tasks(project: _project.PyProject) -> None:
 
 
 def print_tasks_and_scripts(project: _project.PyProject) -> None:
-    """Print tasks, and optionally scripts, to stdout."""
-    tasks: list[tuple[str, bool]] = [(name, False) for name in project.task_names]
+    """Print tasks scripts to stdout, prefixed by a marker.
+
+    Scripts use a space for the marker as an indication that they exist
+    in the virtual environment. Tasks use a plus to indicate that they
+    add additional functionality. Tasks that cannot be used because the
+    definition is in error are marked with an upper-case 'E'.
+    """
+    tasks = [(name, False) for name in project.task_names]
     tasks += [(name, True) for name in _project.external_scripts(project.venv_bin_path)]
     tasks.sort()
 
@@ -195,7 +215,13 @@ def print_dl(items: Sequence[tuple[str, str]],
     """Print a definition list.
 
     Prints a term, followed by a definition, performing wrapping and
-    styling as appropriate.
+    styling as appropriate. Supports multiline formatting by preserving
+    common indentation and preserving newlines, but wrapping long lines
+    to match the given indentation.
+
+    This is similar to click's HelpFormatter.write_dl() method, but
+    write_dl()'s wrapping rules didn't produce the desired results when
+    formatting definitions that should span multiple lines.
     """
     ctx = click.get_current_context()
     width = ctx.terminal_width or 80
@@ -226,7 +252,8 @@ def _error(msg: str, exitcode: None) -> None: ...
 
 def _error(msg: str, exitcode: int | None = 1) -> NoReturn | None:
     """Print an error message, and optionally exit."""
-    click.echo(f'{click.style("error", fg="red", bold=True)}: {msg}', err=True)
+    prefix = click.style("error", fg="red", bold=True)
+    click.echo(f'{prefix}: {msg}', err=True)
     if exitcode is not None:
         exit(exitcode)
     return None
