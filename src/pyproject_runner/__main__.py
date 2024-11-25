@@ -84,8 +84,8 @@ def print_project(project: _project.PyProject) -> None:
     """
     bold = functools.partial(click.style, bold=True)
     click.echo(f"{bold('name')}  {project.name}\n"
-               f"{bold('root')}  {project.root}\n"
-               f"{bold('venv')}  {project.venv_path}")
+               f"{bold('root')}  {click.format_filename(project.root)}\n"
+               f"{bold('venv')}  {click.format_filename(project.venv_path)}")
 
     workspace = project.workspace
     if workspace:
@@ -93,7 +93,7 @@ def print_project(project: _project.PyProject) -> None:
                             for mem in workspace.members)
         click.echo(f"\n{bold('workspace')}\n"
                    f"  {bold('name')}     {workspace.name}\n"
-                   f"  {bold('root')}     {workspace.root}\n"
+                   f"  {bold('root')}     {click.format_filename(workspace.root)}\n"
                    f"  {bold('members')}  {members}")
 
     if project.task_names:
