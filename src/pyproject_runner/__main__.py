@@ -1,78 +1,17 @@
 from __future__ import annotations
 
+import functools
 import json
 import os
 from pathlib import Path
 import pprint
 import shutil
 import textwrap
-from typing import Any, Final, Mapping, NoReturn, overload, Sequence, TYPE_CHECKING
+from typing import NoReturn, overload, Sequence
 
 import click
 
 from . import _project
-
-
-class Styled(str):
-    """A string with click styling as metadata.
-
-    Used where click.style() might be used, but where the styling should
-    not be immediately applied because it adds unprintable characters
-    that change the length of the string, affecting formatting. This
-    class holds the desired styles and only applies them when __str__()
-    is called, thus the string length remains unchanged when calculating
-    the space required for the printed string.
-    """
-    __slots__ = 'style',
-
-    def __new__(cls, /, text: Any, **kwargs: Any) -> Styled:
-        return super().__new__(cls, text)
-
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            /,
-            text: Any,
-            *,
-            fg: int | tuple[int, int, int] | str | None = None,
-            bg: int | tuple[int, int, int] | str | None = None,
-            bold: bool | None = None,
-            dim: bool | None = None,
-            underline: bool | None = None,
-            overline: bool | None = None,
-            italic: bool | None = None,
-            blink: bool | None = None,
-            reverse: bool | None = None,
-            strikethrough: bool | None = None,
-            reset: bool = True,
-        ) -> None:
-            self.style: Final[Mapping[str, Any]] = {}
-    else:
-        def __init__(self, /, text: str, **style: Any) -> None:
-            self.style = style
-
-    def __repr__(self) -> str:
-        args = [super().__repr__()]
-        args += [f'{k}={v!r}' for k, v in self.style.items()
-                 if v is not None and (k, v) != ('reset', True)]
-        return f'{self.__class__.__name__}({", ".join(args)})'
-
-    def __str__(self) -> str:
-        return click.style(super().__str__(), **self.style)
-
-    @overload
-    @classmethod
-    def use_style(cls, text: str, from_style: Styled) -> Styled: ...
-    @overload
-    @classmethod
-    def use_style(cls, text: str, from_style: str) -> str: ...
-
-    @classmethod
-    def use_style(cls, text: str, from_style: str | Styled) -> str | Styled:
-        """Copy the style from one string to another."""
-        if isinstance(from_style, Styled):
-            return cls(text, **from_style.style)
-        return text
 
 
 @click.command(
@@ -122,7 +61,10 @@ def main(ctx: click.Context, command: tuple[str, ...], color: str | None,
     elif do_list:
         print_tasks(project)
     elif not command:
+        click.echo(f"Provide a command to invoke with `rr <command>`.")
+        click.echo('\nThe following scripts ( ) and tasks (+) are available in the environment:\n')
         print_tasks_and_scripts(project)
+        click.echo(f"\nSee {click.style('`rr --help`', bold=True)} for more information")
     else:
         name, *args = command
         try:
@@ -140,26 +82,22 @@ def print_project(project: _project.PyProject) -> None:
 
     This is useful for debugging tasks.
     """
-    print_dl([
-        (Styled('name', bold=True), project.name),
-        (Styled('root', bold=True), str(project.root)),
-        (Styled('venv', bold=True), str(project.venv_path)),
-    ])
+    bold = functools.partial(click.style, bold=True)
+    click.echo(f"{bold('name')}  {project.name}\n"
+               f"{bold('root')}  {project.root}\n"
+               f"{bold('venv')}  {project.venv_path}")
+
     workspace = project.workspace
     if workspace:
         members = ', '.join(str(mem.relative_to(workspace.root))
                             for mem in workspace.members)
-        click.secho('\nworkspace', bold=True)
-        print_dl((
-            (Styled('name', bold=True), workspace.name),
-            (Styled('root', bold=True), str(workspace.root)),
-            (Styled('members', bold=True), members),
-        ), indent=2)
+        click.echo(f"\n{bold('workspace')}\n"
+                   f"  {bold('name')}     {workspace.name}\n"
+                   f"  {bold('root')}     {workspace.root}\n"
+                   f"  {bold('members')}  {members}")
+
     if project.task_names:
-        ctx = click.get_current_context()
-        width = ctx.terminal_width or 80
-        if ctx.max_content_width and width > ctx.max_content_width:
-            width = ctx.max_content_width
+        width = content_width()
         click.secho('\ntasks', bold=True)
         for name in sorted(project.task_names):
             click.secho(f'  {name}', bold=True)
@@ -175,8 +113,17 @@ def print_project(project: _project.PyProject) -> None:
                     click.echo(f'    {line}')
 
 
+def content_width() -> int:
+    ctx = click.get_current_context()
+    width = ctx.terminal_width or 80
+    if ctx.max_content_width and width > ctx.max_content_width:
+        return ctx.max_content_width
+    return width
+
+
 def print_tasks(project: _project.PyProject) -> None:
     """Print tasks, with any associated help, to stdout."""
+    style = functools.partial(click.style, bold=True)
     items = []
     for name in project.task_names:
         try:
@@ -184,7 +131,7 @@ def print_tasks(project: _project.PyProject) -> None:
         except _project.TaskLookupError:
             continue
         else:
-            items.append((Styled(name, fg='cyan', bold=True), task.help or ''))
+            items.append((style(name), textwrap.dedent(task.help) if task.help else ''))
     print_dl(items)
 
 
@@ -214,35 +161,48 @@ def print_dl(items: Sequence[tuple[str, str]],
              indent: int = 0, col_max: int = 20) -> None:
     """Print a definition list.
 
-    Prints a term, followed by a definition, performing wrapping and
-    styling as appropriate. Supports multiline formatting by preserving
-    common indentation and preserving newlines, but wrapping long lines
-    to match the given indentation.
+    Prints a term, followed by a definition, wrapping appropriately.
+    Supports multiline formatting by preserving common indentation and
+    preserving newlines, but wrapping long lines to match the given
+    indentation.
 
     This is similar to click's HelpFormatter.write_dl() method, but
-    write_dl()'s wrapping rules didn't produce the desired results when
-    formatting definitions that should span multiple lines.
+    write_dl()'s wrapping rules don't produce the desired results when
+    formatting definitions that include embedded newlines.
     """
-    ctx = click.get_current_context()
-    width = ctx.terminal_width or 80
-    if ctx.max_content_width and width > ctx.max_content_width:
-        width = ctx.max_content_width
-    width -= indent
-    term_width = min(col_max, max(len(term) for term, _ in items
-                                  if len(term) <= col_max))
+    items = [(Styled(term), Styled(definition)) for term, definition in items]
+    term_width = max([1, *(len(term) for term, _ in items if len(term) <= col_max)])
     indentation = ' ' * (term_width + 2 + indent)
+    width = content_width() - indent
 
     for term, definition in items:
-        nl = len(term) > term_width
-        click.echo(f'{"":{indent}}{term}', nl=nl or not definition)
+        newline = len(term) > term_width
+        click.echo(f'{"":{indent}}{term}', nl=newline or not definition)
         if definition:
-            text = '\n'.join(
+            definition = '\n'.join(
                 textwrap.fill(line, width=width, drop_whitespace=False,
                               initial_indent=indentation, subsequent_indent=indentation)
-                for line in textwrap.dedent(definition).splitlines())
-            if not nl:
-                text = text[len(term) + indent:]
-            click.echo(str(Styled.use_style(text, definition)))
+                for line in definition.splitlines())
+            if not newline:
+                definition = definition[len(term) + indent:]
+            click.echo(definition)
+
+
+class Styled(str):
+    """Wrap a potentially styled string to calculate its printable length
+    rather than its length with unprintable characters, which would throw
+    off string formatting.
+    """
+    __slots__ = '_unstyled_length',
+
+    _unstyled_length: int
+
+    def __len__(self) -> int:
+        try:
+            return self._unstyled_length
+        except AttributeError:
+            self._unstyled_length = len(click.unstyle(self))
+        return self._unstyled_length
 
 
 @overload
