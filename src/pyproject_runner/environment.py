@@ -23,11 +23,11 @@ beginning of a line or after white space and continue to the end of the
 line. Comments are discarded by the parser.
 
 Syntax:
-    expression        ::=  (assignment | comment | ws)* "\n"
+    expression        ::=  (assignment | comment | ws) "\n"
     assignment        ::=  ws* name ws* "=" ws* value (ws+ comment)?
     name              ::=  (letter | "_") (letter | digit | "_")*
+    comment           ::=  "#" not-newline*
     value             ::=  (double-quoted | single-quoted | unquoted)*
-    comment           ::=  "#" not-newline
     double-quoted     ::=  double-quote (not-double-quote | escaped)* double-quote
     single-quoted     ::=  single-quote not-single-quote* single-quote
     unquoted          ::=  (not-quote | escaped)+
@@ -35,7 +35,7 @@ Syntax:
     not-newline       ::=  any-character - "\n"
     not-double-quote  ::=  any-character - double-quote
     not-single-quote  ::=  any-character - single-quote
-    not-quote         ::=  any-character - (double-quote | single-quote)
+    not-quote         ::=  any-character - (double-quote | single-quote | "\n")
     letter            ::=  "A"..."Z" | "a"..."z"
     digit             ::=  "0"..."9"
     ws                ::=  " " | "\t" | "\r" | "\f" | "\v"
@@ -47,6 +47,7 @@ Syntax:
 from __future__ import annotations
 
 import collections
+import dataclasses
 import os
 import re
 from typing import Any, cast, Final, Iterator, Literal, Mapping, NamedTuple
@@ -54,7 +55,7 @@ from typing import Any, cast, Final, Iterator, Literal, Mapping, NamedTuple
 __all__ = 'evaluate', 'expand'
 
 
-_IS_WINDOWS: Final = os.name == 'nt'
+_UPPERCASE_ENV: Final = os.name == 'nt'
 
 
 TokenType = Literal['ASSIGN', 'COMMENT', 'DQUOTE', 'ESCAPE',
@@ -73,8 +74,7 @@ TOKENS: Final[tuple[tuple[TokenType, str], ...]] = (
 SPLIT_RE: Final = re.compile('|'.join(f'(?P<{kind}>{pattern})'
                                       for kind, pattern in TOKENS),
                              re.MULTILINE)
-EXPAND_RE: Final = re.compile(r'\$(\{)?(?P<name>(?ai:[a-z_][a-z0-9_]*))(?(1)})',
-                              re.MULTILINE)
+EXPAND_RE: Final = re.compile(r'\$(\{)?(?P<name>(?ai:[a-z_][a-z0-9_]*))(?(1)})', re.MULTILINE)
 
 
 class Fragment(str):
@@ -98,7 +98,7 @@ class Fragment(str):
         """
         def repl(match: re.Match[str]) -> str:
             name = match.group('name')
-            if _IS_WINDOWS:
+            if _UPPERCASE_ENV:
                 name = name.upper()
             return env.get(name) or ''
 
@@ -107,10 +107,12 @@ class Fragment(str):
         return str(self)
 
 
-class Token(NamedTuple):
+@dataclasses.dataclass(slots=True)
+class Token:
     """Represents a token in the parsed string."""
     type: TokenType
     value: str
+    _: dataclasses.KW_ONLY
     line: int
     column: int
     match: re.Match[str] | None
@@ -133,19 +135,21 @@ def tokenize(text: str) -> Iterator[Token]:
         column = start - line_start
         if start > previous_end:
             # Yield any text between matches
-            yield Token('TEXT', text[previous_end:start], line, previous_end - line_start, None)
+            yield Token('TEXT', text[previous_end:start],
+                        line=line, column=previous_end - line_start, match=None)
         previous_end = match.end()
-        yield Token(kind, value, line, column, match)
+        yield Token(kind, value, line=line, column=column, match=match)
         if kind == 'NEWLINE':
             line += 1
             line_start = start
 
     if previous_end < len(text):
         # Yield any text after the last match
-        yield Token('TEXT', text[previous_end:], line, previous_end - line_start, None)
+        yield Token('TEXT', text[previous_end:],
+                    line=line, column=previous_end - line_start, match=None)
 
 
-def parse(text: str) -> Iterator[tuple[str, Iterator[Fragment]]]:
+def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
     """Iterate variable assignments in a string.
 
     Yields 2-tuples of variable name and value fragments.
@@ -167,8 +171,8 @@ def parse(text: str) -> Iterator[tuple[str, Iterator[Fragment]]]:
                     yield from quoted(token)
                 case Token('ESCAPE', value):
                     yield Fragment(value[1:], False)
-                case _:
-                    raise syntax_error('Unexpected token', token)
+                case _:  # pragma: no cover
+                    raise NotImplementedError(token)
 
     def quoted(quote: Token) -> Iterator[Fragment]:
         """Parse a quoted fragment.
@@ -195,8 +199,8 @@ def parse(text: str) -> Iterator[tuple[str, Iterator[Fragment]]]:
                     yield Fragment(value[1:], False)
                 case Token(_, value):
                     yield Fragment(value, quote.type == 'DQUOTE')
-                case _:
-                    raise syntax_error('Unexpected token', token)
+                case _:  # pragma: no cover
+                    raise NotImplementedError(token)
             empty = False
         raise syntax_error('Unterminated quote', quote)
 
@@ -216,7 +220,9 @@ def parse(text: str) -> Iterator[tuple[str, Iterator[Fragment]]]:
                 pass  # Discard
             case Token('ASSIGN'):
                 assert token.match
-                yield token.match.group('name'), assignment_value()
+                yield token.match.group('name'), list(assignment_value())
+            case Token('TEXT', value) if value.isspace():
+                pass  # Discard
             case _:
                 raise syntax_error('Unexpected token', token)
 
@@ -231,8 +237,8 @@ def evaluate(text: str, env: Mapping[str, str | None]) -> dict[str, str | None]:
     """
     updates: dict[str, str | None] = {}
     env = collections.ChainMap(updates, env)  # type: ignore[arg-type]
-    for name, (*fragments,) in parse(text):
-        if _IS_WINDOWS:
+    for name, fragments in parse(text):
+        if _UPPERCASE_ENV:
             name = name.upper()
         if not fragments:
             value: str | None = None

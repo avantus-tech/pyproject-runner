@@ -6,6 +6,7 @@ authors = [
     { name = "Brandon Carpenter", email = "brandon@avantus.com" }
 ]
 dependencies = [
+    # TODO expand versions to be less restrictive
     "click ~= 8.1.7",
     "tomli ~= 2.0.1; python_version < '3.11'",
 ]
@@ -34,7 +35,22 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "mypy~=1.11.1",
+    "hypothesis ~= 6.119",
+    "mypy ~= 1.11",
+    "pytest ~= 8.3",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    'pragma: no cover',
+    'def __repr__',
+    'raise AssertionError',
+    'raise NotImplementedError',
+    'if False:',
+    'if __name__ == .__main__.:',
+    'if TYPE_CHECKING:',
+    '@(abc\.)?abstractmethod',
+    '@(typing\.)?overload',
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -56,11 +72,13 @@ mypy_path = "src"
 packages = "pyproject_runner"
 strict = true
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.pyproject-runner.tasks]
-version = { call = "builtins:print(__import__('sys').version)" }
-version-cmd = { cmd = ["python", "-c", "builtins:print(__import__('sys').version)"], help="This is a version command." }
-version-chain = { pre = ["version-cmd", "noop"]}
+check = {pre=["typecheck", "test"], help="Perform all code checks"}
+test = {cmd="pytest", help="Run unit tests"}
+typecheck = {cmd="mypy src tests", help="Perform type analysis on src and tests"}
 
 [tool.uv.workspace]
 members = ["shim"]
