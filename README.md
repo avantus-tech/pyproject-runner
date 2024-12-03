@@ -249,6 +249,20 @@ So, if the *pyproject.toml* file is in `/user/project`, and the current working 
 | ../bar         | /user/project/src/bar         |
 | /usr/bin/mypy  | /usr/bin/mypy                 |
 
+### Environment variables
+
+Setting the following environment variables changes pyproject-runner's behavior.
+
+FORCE_COLOR
+: Force color output regardless of terminal support.
+
+NO_COLOR
+: Disable color output (takes precedence over `FORCE_COLOR`).
+
+UV_PROJECT_ENVIRONMENT
+: Specifies the path to the directory to use for a project virtual environment (see
+  [uv's documentation](https://docs.astral.sh/uv/configuration/environment/#uv_project_environment) for more info).
+
 
 ## Execution environment
 
@@ -343,6 +357,22 @@ Below is a list of features that might be implemented in the future (no guarante
  - [ ] Add ability to create shims for tasks
 
 Do you have additional feature requests? Submit an issue or pull request.
+
+
+## Frequently asked questions
+
+* **Why not just use taskipy or Poe the Poet?**
+  + They are both good projects, but neither were quite the right fit for my non-Poetry projects:
+    - Both have many dependencies that are restricted to a narrow range of versions, which conflict
+      with projects I work on that require newer versions of those packages.
+    - Both were designed around Poetry.
+    - Neither offer a shim to simplify use under uv.
+  + pyproject-runner was created to solve those issues, and offers the following benefits:
+    - It has only one dependency for Python >= 3.11, or two for Python 3.10, pinned only to the
+      lowest compatible version.
+    - It makes it easy to move from Rye to uv, or to use with new uv projects.
+    - Offers a shim to reduce typing.
+    - It's simple, fast, and small, with less than 1000 lines of code.
 
 
 ## License

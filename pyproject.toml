@@ -6,15 +6,14 @@ authors = [
     { name = "Brandon Carpenter", email = "brandon@avantus.com" }
 ]
 dependencies = [
-    # TODO expand versions to be less restrictive
-    "click ~= 8.1.7",
-    "tomli ~= 2.0.1; python_version < '3.11'",
+    "click >= 6",
+    "tomli >= 1.1; python_version < '3.11'",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
 license.file = "LICENSE.txt"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
@@ -46,10 +45,8 @@ exclude_lines = [
     'def __repr__',
     'raise AssertionError',
     'raise NotImplementedError',
-    'if False:',
     'if __name__ == .__main__.:',
     'if TYPE_CHECKING:',
-    '@(abc\.)?abstractmethod',
     '@(typing\.)?overload',
 ]
 
