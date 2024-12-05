@@ -50,6 +50,14 @@ exclude_lines = [
     '@(typing\.)?overload',
 ]
 
+[tool.coverage.run]
+branch = true
+source = ['src/pyproject_runner']
+omit = [
+	'__main__.py',
+]
+
+
 [tool.hatch.build.targets.sdist]
 only-include = [
     '.python-version',
@@ -74,6 +82,8 @@ testpaths = ["tests"]
 
 [tool.pyproject-runner.tasks]
 check = {pre=["typecheck", "test"], help="Perform all code checks"}
+coverage = {cmd='uv run --with "pytest-cov~=6.0" pytest --cov=pyproject_runner', help="Run unit tests and report coverage"}
+help = {cmd="uv run rr -l", help="Show this help and exit"}
 test = {cmd="pytest", help="Run unit tests"}
 typecheck = {cmd="mypy src tests", help="Perform type analysis on src and tests"}
 
