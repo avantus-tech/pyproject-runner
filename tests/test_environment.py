@@ -1,7 +1,6 @@
 import functools
-import re
 import string
-from typing import Any, Callable, Iterator, Literal, no_type_check
+from typing import Any, Callable, Iterator, Literal
 
 import hypothesis
 from hypothesis import strategies as st
@@ -53,9 +52,9 @@ def test_fragment(init_value: Any, expected: str, expandable: bool, adjust_env_c
         assert fragment.expand(env) == str(init_value)
 
 
-@no_type_check
 def tokens() -> TokenList:
     def limit_quotes(items: TokenPairs) -> bool:
+        """Avoid ambiguous triple quotes."""
         previous_item: TokenPair = '\n', 'NEWLINE'
         for i, item in enumerate(items):
             match previous_item, item:
@@ -64,13 +63,14 @@ def tokens() -> TokenList:
                 case ("'", 'SQUOTE'), ("'", 'SQUOTE') if i > 1 and items[i - 2] == item:
                     return False  # three single single-quotes in a row
                 case ('"', 'DQUOTE'), ('"""', 'DQUOTE'):
-                    return False  # A single next to a triple double-quote
+                    return False  # A single before a triple double-quote
                 case ("'", 'SQUOTE'), ("'''", 'SQUOTE'):
-                    return False  # A single next to a triple single-quote
+                    return False  # A single before a triple single-quote
             previous_item = item
         return True
 
     def merge_dups(items: TokenPairs) -> TokenPairs:
+        """Merge adjacent TEXT and WS tokens in to a single token."""
         result: TokenPairs = []
         previous_item: TokenPair = '\n', 'NEWLINE'
         for item in items:
@@ -82,80 +82,84 @@ def tokens() -> TokenList:
             previous_item = item
         return result
 
-    def quantify(strategy: Callable[[], TokenList]) -> Callable[..., TokenList]:
+    def quantify(strategy: st.SearchStrategy[TokenPairs]) -> Callable[..., TokenList]:
+        """Provide regex-like quantifiers for strategy productions.
+
+        This allows the productions below to closely match the grammar
+        in the environment module.
+        """
         def _quantify(how: Literal['?', '*', '+'] | None = None) -> TokenList:
             match how:
                 case '?':
-                    return st.just([]) | strategy()
+                    return st.just([]) | strategy
                 case '*':
-                    return st.just([]) | st.recursive(s := strategy(), lambda x: concat(x, s))
+                    return st.just([]) | st.recursive(strategy, lambda x: concat(x, strategy))
                 case '+':
-                    return st.recursive(s := strategy(), lambda x: concat(x, s))
+                    return st.recursive(strategy, lambda x: concat(x, strategy))
                 case None:
-                    return strategy()
+                    return strategy
                 case _:
                     raise NotImplementedError(how)
         return _quantify
 
-    def token(type: environment.TokenType, strategy: Callable[[], st.SearchStrategy[str]]) -> Callable[..., TokenList]:
-        return quantify(lambda: strategy().map(lambda t: [(t, type)]))
-
-    name_re = re.compile(r'(?ai:(?:^|(?<=\s|\n))([a-z_][a-z0-9_]*))')
-
-    @st.composite
-    def TEXT(draw: Callable[[st.SearchStrategy[str]], str]) -> TokenPairs:
-        string = draw(st.text(
-            st.characters(codec='utf-8', exclude_characters=' \t\r\f\v\n#=\\"\''), min_size=1))
-        return [(s, 'NAME' if i % 2 else 'TEXT')
-                for i, s in enumerate(name_re.split(string)) if s]
+    def term(type: environment.TokenType, strategy: st.SearchStrategy[str]) -> TokenList:
+        return strategy.map(lambda t: [(t, type)] if t else [])
 
     concat = functools.partial(st.builds, lambda *args: functools.reduce(lambda x, y: x + y, args, []))
 
-    # Reproduces the grammar in the environment module
-    ESCAPE = token('ESCAPE', lambda: st.builds('\\{}'.format, st.text(min_size=1, max_size=1)))
-    ASSIGN = token('ASSIGN', lambda: st.just('='))
-    COMMENT = token('COMMENT', lambda: st.just('#'))
-    DQUOTE = token('DQUOTE', lambda: st.just('"') | st.just('"""'))
-    NEWLINE = token('NEWLINE', lambda: st.just('\n'))
-    SQUOTE = token('SQUOTE', lambda: st.just("'") | st.just("'''"))
-    WS = lambda how=None: st.text(' \t\r\f\v', **{
-        '?': {'max_size': 1},
-        '*': {},
-        '+': {'min_size': 1},
-        None: {'min_size': 1, 'max_size': 1},
-    }[how]).map(lambda t: [(t, 'WS')] if t else [])
+    # Reproduce the grammar in the environment module
 
-    NAME = token('TEXT', lambda: st.builds(
+    # Terminals:
+    ESCAPE = term('ESCAPE', st.builds('\\{}'.format, st.text(min_size=1, max_size=1)))
+    ESCAPE_WO_NEWLINE = term('ESCAPE', st.builds('\\{}'.format, st.text(
+        st.characters(codec='utf-8', exclude_characters='\n'), min_size=1, max_size=1)))
+    ASSIGN = term('ASSIGN', st.just('='))
+    COMMENT = term('COMMENT', st.just('#'))
+    DQUOTE = term('DQUOTE', st.just('"') | st.just('"""'))
+    NEWLINE = term('NEWLINE', st.just('\n'))
+    SQUOTE = term('SQUOTE', st.just("'") | st.just("'''"))
+
+    NAME = term('TEXT', st.builds(
         str.__add__,
         st.text(string.ascii_letters + '_', min_size=1, max_size=1),
         st.text(string.ascii_letters + string.digits + '_'),
     ))
-    TEXT = token('TEXT', lambda: st.text(
+    TEXT = term('TEXT', st.text(
         st.characters(codec='utf-8', exclude_characters=' \t\r\f\v\n#=\\"\''), min_size=1))
 
+    # Productions:
+    def ws(how: Literal['?', '*', '+'] | None=None) -> st.SearchStrategy[TokenPairs]:
+        kwargs = {
+            '?': {'max_size': 1},
+            '*': {},
+            '+': {'min_size': 1},
+            None: {'min_size': 1, 'max_size': 1},
+        }[how]
+        return term('WS', st.text(' \t\r\f\v', **kwargs))
 
     _ = quantify
-    not_quote = lambda: ASSIGN() | COMMENT() | TEXT() | WS()
-    not_single_quote = _(lambda: ESCAPE() | ASSIGN() | COMMENT() | NEWLINE() | DQUOTE() | TEXT() | WS())
-    not_double_quote = lambda: ESCAPE() | ASSIGN() | COMMENT() | NEWLINE() | SQUOTE() | TEXT() | WS()
-    not_newline = _(lambda: ESCAPE() | ASSIGN() | COMMENT() | DQUOTE() | SQUOTE() | TEXT() | WS())
+    not_quote = ASSIGN | TEXT | ws()
+    not_single_quote = ESCAPE | ASSIGN | COMMENT | NEWLINE | DQUOTE | TEXT | ws()
+    not_double_quote = ESCAPE | ASSIGN | COMMENT | NEWLINE | SQUOTE | TEXT | ws()
+    not_newline = ESCAPE_WO_NEWLINE | ASSIGN | COMMENT | DQUOTE | SQUOTE | TEXT | ws()
     escaped = ESCAPE
-    unquoted = lambda: _(lambda: not_quote() | ESCAPE())('+')
-    single_quoted = lambda: st.one_of(
-        st.builds(lambda x: [q := ("'", 'SQUOTE'), *x, q], not_single_quote('*')),
-        st.builds(lambda x: [q := ("'''", 'SQUOTE'), *x, q], not_single_quote('*')),
+    unquoted = _(not_quote | escaped)('+')
+    single_quoted = st.one_of(
+        st.builds(lambda x: [q := ("'", 'SQUOTE'), *x, q], _(not_single_quote)('*')),
+        st.builds(lambda x: [q := ("'''", 'SQUOTE'), *x, q], _(not_single_quote)('*')),
     )
-    double_quoted = lambda: st.one_of(
-        st.builds(lambda x: [q := ('"', 'DQUOTE'), *x, q], _(lambda: not_double_quote() | escaped())('*')),
-        st.builds(lambda x: [q := ('"""', 'DQUOTE'), *x, q], _(lambda: not_double_quote() | escaped())('*')),
+    double_quoted = st.one_of(
+        st.builds(lambda x: [q := ('"', 'DQUOTE'), *x, q], _(not_double_quote | escaped)('*')),
+        st.builds(lambda x: [q := ('"""', 'DQUOTE'), *x, q], _(not_double_quote | escaped)('*')),
     )
-    value = lambda: _(lambda: double_quoted() | single_quoted() | unquoted())('*')
-    comment = lambda: concat(COMMENT(), not_newline('*'))
-    assignment = lambda: concat(WS('*'), NAME(), WS('*'), ASSIGN(), WS('*'), value(),
-                               _(lambda: concat(WS('+'), comment()))('?'))
-    expression = lambda: concat(assignment() | comment() | WS('*'), NEWLINE()).map(merge_dups).filter(limit_quotes)
+    value = _(double_quoted | single_quoted | unquoted)('*')
+    comment = concat(COMMENT, _(not_newline)('*'))
+    assignment = concat(ws('*'), NAME, ws('*'), ASSIGN, ws('*'), value,
+                        _(concat(ws('+'), comment))('?'))
+    expression = concat(assignment | comment | ws('*'), NEWLINE).map(
+        merge_dups).filter(limit_quotes)
 
-    return expression()
+    return expression
 
 
 @hypothesis.given(tokens())
@@ -238,6 +242,8 @@ bar=43
 some=this is the $PATH
 none=this $does not ${exist}
 quoted_comment = " # this is not a comment" # but this is
+  # newlines end comments, even if escaped \
+not_set = # here too \
 
 escaped = \$do $\{not} ${expand\}
 ''' """

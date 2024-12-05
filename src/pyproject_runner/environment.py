@@ -35,7 +35,7 @@ Syntax:
     not-newline       ::=  any-character - "\n"
     not-double-quote  ::=  any-character - double-quote
     not-single-quote  ::=  any-character - single-quote
-    not-quote         ::=  any-character - (double-quote | single-quote | "\n" | "\")
+    not-quote         ::=  any-character - (double-quote | single-quote | "\n" | "\" | "#")
     letter            ::=  "A"..."Z" | "a"..."z"
     digit             ::=  "0"..."9"
     ws                ::=  " " | "\t" | "\r" | "\f" | "\v"
@@ -179,7 +179,9 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
                 case Token('NEWLINE'):
                     break  # discard
                 case _ if comment:
-                    pass
+                    # Cannot escape a newline in a comment
+                    if token.type == 'ESCAPE' and token.value[-1] == '\n':
+                        break
                 case Token('COMMENT', value):
                     if fragments and fragments[-1].whitespace:
                         comment = True
@@ -251,7 +253,9 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
             case Token('NEWLINE'):
                 comment = False  # Discard
             case _ if comment:
-                pass  # Discard
+                # Cannot escape a newline in a comment
+                if token.type == 'ESCAPE' and token.value[-1] == '\n':
+                    comment = False
             case Token('COMMENT'):
                 comment = True  # Discard
             case Token('WS'):
