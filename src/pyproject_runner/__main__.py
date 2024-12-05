@@ -50,11 +50,15 @@ def main(ctx: click.Context, command: tuple[str, ...], color: str | None,
                 ctx.color = True
 
     if project_path and project_path.is_file():
-        project: _project.PyProject | None = _project.PyProject.load(project_path)
+        try:
+            project = _project.PyProject.load(project_path)
+        except ValueError as exc:
+            _error(f'{project_path}: {exc}')
     else:
-        project = _project.PyProject.discover(project_path or Path().resolve())
-    if project is None:
-        _error('did not find pyproject.toml')
+        project_or_none = _project.PyProject.discover(project_path or Path().resolve())
+        if project_or_none is None:
+            _error('pyproject.toml not found')
+        project = project_or_none
 
     if show_project:
         print_project(project)
@@ -69,7 +73,7 @@ def main(ctx: click.Context, command: tuple[str, ...], color: str | None,
         name, *args = command
         try:
             task = project.task(name)
-            exit(task.run(args, project))
+            exit(task.run(project, args))
         except _project.TaskLookupError as exc:
             msg = str(exc)
             if exc.__context__:
@@ -84,8 +88,8 @@ def print_project(project: _project.PyProject) -> None:
     """
     bold = functools.partial(click.style, bold=True)
     click.echo(f"{bold('name')}  {project.name}\n"
-               f"{bold('root')}  {click.format_filename(project.root)}\n"
-               f"{bold('venv')}  {click.format_filename(project.venv_path)}")
+               f"{bold('root')}  {project.root}\n"
+               f"{bold('venv')}  {project.venv_path}")
 
     workspace = project.workspace
     if workspace:
@@ -93,7 +97,7 @@ def print_project(project: _project.PyProject) -> None:
                             for mem in workspace.members)
         click.echo(f"\n{bold('workspace')}\n"
                    f"  {bold('name')}     {workspace.name}\n"
-                   f"  {bold('root')}     {click.format_filename(workspace.root)}\n"
+                   f"  {bold('root')}     {workspace.root}\n"
                    f"  {bold('members')}  {members}")
 
     if project.task_names:

@@ -23,7 +23,7 @@ beginning of a line or after white space and continue to the end of the
 line. Comments are discarded by the parser.
 
 Syntax:
-    expression        ::=  (assignment | comment | ws) "\n"
+    expression        ::=  (assignment | comment | ws*) "\n"
     assignment        ::=  ws* name ws* "=" ws* value (ws+ comment)?
     name              ::=  (letter | "_") (letter | digit | "_")*
     comment           ::=  "#" not-newline*
@@ -35,7 +35,7 @@ Syntax:
     not-newline       ::=  any-character - "\n"
     not-double-quote  ::=  any-character - double-quote
     not-single-quote  ::=  any-character - single-quote
-    not-quote         ::=  any-character - (double-quote | single-quote | "\n")
+    not-quote         ::=  any-character - (double-quote | single-quote | "\n" | "\")
     letter            ::=  "A"..."Z" | "a"..."z"
     digit             ::=  "0"..."9"
     ws                ::=  " " | "\t" | "\r" | "\f" | "\v"
@@ -59,17 +59,18 @@ _UPPERCASE_ENV: Final = os.name == 'nt'
 
 
 TokenType = Literal['ASSIGN', 'COMMENT', 'DQUOTE', 'ESCAPE',
-                    'NEWLINE', 'SQUOTE', 'TEXT']
+                    'NEWLINE', 'SQUOTE', 'TEXT', 'WS']
 
 
 WS: Final = r'[ \t\r\f\v]'  # White space minus newline
 TOKENS: Final[tuple[tuple[TokenType, str], ...]] = (
-    ('ASSIGN', fr'^{WS}*(?P<name>(?ai:[a-z_][a-z0-9_]*)){WS}*={WS}*'),
-    ('COMMENT', fr'(?:^{WS}*|{WS}+|(?<={WS}|\n))#.*$'),
-    ('DQUOTE', '"""|"'),
     ('ESCAPE', r'\\(?s:.)'),
-    ('NEWLINE', fr'{WS}*\n'),
+    ('ASSIGN', '='),
+    ('COMMENT', '#'),
+    ('DQUOTE', '"""|"'),
+    ('NEWLINE', '\n'),
     ('SQUOTE', "'''|'"),
+    ('WS', f'[ \t\r\f\v]+'),  # Whitespace minus newline
 )
 SPLIT_RE: Final = re.compile('|'.join(f'(?P<{kind}>{pattern})'
                                       for kind, pattern in TOKENS),
@@ -80,13 +81,15 @@ EXPAND_RE: Final = re.compile(r'\$(\{)?(?P<name>(?ai:[a-z_][a-z0-9_]*))(?(1)})',
 class Fragment(str):
     """String fragment of variable assignment value."""
 
-    __slots__ = 'expandable',
+    __slots__ = 'expandable', 'whitespace'
 
     expandable: bool
+    whitespace: bool
 
-    def __new__(cls, value: Any, expandable: bool) -> Fragment:
+    def __new__(cls, value: Any, expandable: bool, *, whitespace: bool = False) -> Fragment:
         obj = super().__new__(cls, value)
         obj.expandable = expandable
+        obj.whitespace = whitespace
         return obj
 
     def expand(self, env: Mapping[str, str | None]) -> str:
@@ -115,7 +118,6 @@ class Token:
     _: dataclasses.KW_ONLY
     line: int
     column: int
-    match: re.Match[str] | None
 
 
 def tokenize(text: str) -> Iterator[Token]:
@@ -136,9 +138,9 @@ def tokenize(text: str) -> Iterator[Token]:
         if start > previous_end:
             # Yield any text between matches
             yield Token('TEXT', text[previous_end:start],
-                        line=line, column=previous_end - line_start, match=None)
+                        line=line, column=previous_end - line_start)
         previous_end = match.end()
-        yield Token(kind, value, line=line, column=column, match=match)
+        yield Token(kind, value, line=line, column=column)
         if kind == 'NEWLINE':
             line += 1
             line_start = start
@@ -146,7 +148,7 @@ def tokenize(text: str) -> Iterator[Token]:
     if previous_end < len(text):
         # Yield any text after the last match
         yield Token('TEXT', text[previous_end:],
-                    line=line, column=previous_end - line_start, match=None)
+                    line=line, column=previous_end - line_start)
 
 
 def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
@@ -156,23 +158,52 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
     """
     tokens = tokenize(text)
 
-    def assignment_value() -> Iterator[Fragment]:
-        """Parse the right-hand side of a variable assignment."""
+    def assignment(token: Token) -> list[Fragment]:
         for token in tokens:
             match token:
-                case Token('COMMENT' | 'NEWLINE'):
+                case Token('WS'):
+                    pass  # Discard
+                case Token('ASSIGN'):
+                    return assignment_value()
+                case _:
+                    raise syntax_error('unexpected token', token)
+        raise syntax_error('invalid syntax', Token('TEXT', '', line=token.line,
+                                                   column=token.column + len(token.value)))
+
+    def assignment_value() -> list[Fragment]:
+        """Parse the right-hand side of a variable assignment."""
+        fragments: list[Fragment] = []
+        comment = False
+        for token in tokens:
+            match token:
+                case Token('NEWLINE'):
                     break  # discard
-                case Token('ASSIGN', value):
+                case _ if comment:
+                    pass
+                case Token('COMMENT', value):
+                    if fragments and fragments[-1].whitespace:
+                        comment = True
+                    else:
+                        fragments.append(Fragment(value, False))
+                case Token('WS', value):
+                    fragments.append(Fragment(value, False, whitespace=True))
+                case Token('NAME' | 'ASSIGN', value):
                     # Treat assignments within assignments as un-expandable text
-                    yield Fragment(value, False)
+                    fragments.append(Fragment(value, False))
                 case Token('TEXT', value):
-                    yield Fragment(value, True)
+                    fragments.append(Fragment(value, True))
                 case Token('SQUOTE' | 'DQUOTE'):
-                    yield from quoted(token)
+                    fragments += quoted(token)
                 case Token('ESCAPE', value):
-                    yield Fragment(value[1:], False)
+                    fragments.append(Fragment(value[1:], False))
                 case _:  # pragma: no cover
                     raise NotImplementedError(token)
+        # Remove leading and trailing whitespace
+        while fragments and fragments[0].whitespace:
+            fragments.pop(0)
+        while fragments and fragments[-1].whitespace:
+            fragments.pop()
+        return fragments
 
     def quoted(quote: Token) -> Iterator[Fragment]:
         """Parse a quoted fragment.
@@ -202,29 +233,33 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
                 case _:  # pragma: no cover
                     raise NotImplementedError(token)
             empty = False
-        raise syntax_error('Unterminated quote', quote)
+        raise syntax_error('unterminated quote', quote)
 
     def syntax_error(msg: str, token: Token) -> SyntaxError:
         """Build and return a SyntaxError exception instance."""
         error = SyntaxError(msg)
         error.text = text.splitlines(True)[token.line - 1]
         error.lineno = token.line
-        error.offset = token.column
+        error.offset = token.column + 1
         error.end_offset = error.offset + len(token.value)
         error.print_file_and_line = True  # type: ignore[attr-defined]
         return error
 
+    comment = False
     for token in tokens:
         match token:
-            case Token('COMMENT' | 'NEWLINE'):
+            case Token('NEWLINE'):
+                comment = False  # Discard
+            case _ if comment:
                 pass  # Discard
-            case Token('ASSIGN'):
-                assert token.match
-                yield token.match.group('name'), list(assignment_value())
-            case Token('TEXT', value) if value.isspace():
+            case Token('COMMENT'):
+                comment = True  # Discard
+            case Token('WS'):
                 pass  # Discard
+            case Token('TEXT', value) if value.isidentifier():
+                yield value, assignment(token)
             case _:
-                raise syntax_error('Unexpected token', token)
+                raise syntax_error('unexpected token', token)
 
 
 def evaluate(text: str, env: Mapping[str, str | None]) -> dict[str, str | None]:
@@ -270,13 +305,14 @@ if __name__ == '__main__':
             'help_option_names': ['-h', '--help']
         },
     )
-    @click.argument('env-file', type=click.File('r', encoding='utf-8'), nargs=-1)
-    def main(env_file: tuple[IO[str], ...]) -> None:
+    @click.argument('strings', nargs=-1)
+    def main(strings: tuple[str, ...]) -> None:
         """Show the results of processing an environment file."""
         env = os.environ.copy()
-        for file in env_file:
-            with file:
-                text = file.read()
+        for text in strings:
+            if text.startswith('@'):
+                with click.open_file(text[1:], encoding='utf-8') as file:
+                    text = file.read()
             updates = evaluate(text, env)
             for name, value in updates.items():
                 if value is None:

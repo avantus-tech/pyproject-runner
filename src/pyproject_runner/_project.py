@@ -116,7 +116,6 @@ class Project(Protocol):
 
 class PyProject(Project):
     __slots__ = 'name', 'root', 'doc', '_workspace'
-    __match_args__ = 'name', 'root', 'doc'
 
     def __init__(self, name: str, root: Path, doc: Mapping[str, Any]) -> None:
         self.name: Final = name
@@ -124,13 +123,36 @@ class PyProject(Project):
         self.doc: Final = doc
         self._workspace: Workspace | None
 
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.root == other.root and self.doc == other.doc)
+    @classmethod
+    def from_project_document(cls, document: Mapping[str, Any], root: Path) -> PyProject:
+        match document:
+            case {"project": {"name": str(name)}}:
+                return cls(name, root, doc=document)
+        raise ValueError('invalid python project document')
 
     def __repr__(self) -> str:
-        args = f'root={self.root!r}, doc={self.doc!r}'
+        args = f'name={self.name!r}, root={self.root!r}, doc={self.doc!r}'
         return f'{self.__class__.__module__}.{self.__class__.__qualname__}({args})'
+
+    @classmethod
+    def discover(cls, path: Path) -> PyProject | None:
+        while True:
+            project_file = path / "pyproject.toml"
+            if project_file.is_file():
+                try:
+                    return cls.load(project_file)
+                except ValueError:
+                    pass
+            parent = path.parent
+            if path == parent:
+                return None  # No more directories to traverse
+            path = parent
+
+    @classmethod
+    def load(cls, project_file: Path) -> PyProject:
+        with project_file.open('rb') as file:
+            doc = tomllib.load(file)
+        return cls.from_project_document(doc, project_file.parent)
 
     @property
     def workspace(self) -> Workspace | None:
@@ -138,9 +160,7 @@ class PyProject(Project):
             return self._workspace
         except AttributeError:
             pass
-        workspace = Workspace.from_pyproject(self)
-        if workspace is None:
-            workspace = self.discover_workspace()
+        workspace = Workspace.from_pyproject(self) or self.discover_workspace()
         self._workspace = workspace
         return workspace
 
@@ -149,39 +169,16 @@ class PyProject(Project):
         while True:
             parent = path.parent
             if path == parent:
-                return None
+                return None  # No more directories to traverse
             project = self.discover(parent)
             if project is None:
                 return None
             path = project.root
             workspace = Workspace.from_pyproject(project)
-            if workspace is None:
-                continue
-            for member in workspace.members:
-                if self.root.samefile(member):
-                    return workspace
-
-    @classmethod
-    def discover(cls, path: Path) -> PyProject | None:
-        while True:
-            project_file = path / "pyproject.toml"
-            if project_file.is_file():
-                project = cls.load(project_file)
-                if project is not None:
-                    return project
-            parent = path.parent
-            if path == parent:
-                return None
-            path = parent
-
-    @classmethod
-    def load(cls, project_file: Path) -> PyProject | None:
-        with project_file.open('rb') as file:
-            doc = tomllib.load(file)
-        match doc:
-            case {"project": {"name": str(name)}}:
-                return cls(name, project_file.parent, doc=doc)
-        return None
+            if workspace is not None:
+                for member in workspace.members:
+                    if self.root.samefile(member):
+                        return workspace
 
     @property
     def venv_path(self) -> Path:
@@ -193,20 +190,16 @@ class PyProject(Project):
 
 class Workspace(Project):
     __slots__ = 'name', 'root', 'doc', 'members'
-    __match_args__ = 'name', 'root', 'doc', 'members'
 
-    def __init__(self, name: str, root: Path, doc: Mapping[str, Any], members: Sequence[Path]) -> None:
+    def __init__(self, name: str, root: Path,
+                 doc: Mapping[str, Any], members: Sequence[Path]) -> None:
         self.name: Final = name
         self.root: Final = root
         self.doc: Final = doc
         self.members: Final = members
 
-    def __eq__(self, other: object) -> bool:
-        return (isinstance(other, self.__class__) and self.__class__ == other.__class__ and
-                self.root == other.root and self.doc == other.doc)
-
     def __repr__(self) -> str:
-        args = f'root={self.root!r}, doc={self.doc!r}, members={self.members!r}'
+        args = f'name={self.name!r}, root={self.root!r}, doc={self.doc!r}, members={self.members!r}'
         return f'{self.__class__.__module__}.{self.__class__.__qualname__}({args})'
 
     @classmethod
@@ -322,7 +315,7 @@ class Task:
         env.pop('PYTHONHOME', None)
         return env
 
-    def run(self, args: Sequence[str], project: PyProject) -> int:
+    def run(self, project: PyProject, args: Sequence[str]) -> int:
         # Look up tasks before attempting to run them
         try:
             pre_tasks = [(project.task(name), args) for name, *args in self.pre] if self.pre else None
@@ -336,14 +329,14 @@ class Task:
         # Execute pre-tasks, then this task, followed by post-tasks, stopping on any error
         returncode = 0
         if pre_tasks:
-            returncode = self._run_tasks(pre_tasks, project)
+            returncode = self._run_tasks(project, pre_tasks)
         if not returncode and self.cmd:
-            returncode = self._run(args, project)
+            returncode = self._run(project, args)
         if post_tasks and not returncode:
-            returncode = self._run_tasks(post_tasks, project)
+            returncode = self._run_tasks(project, post_tasks)
         return returncode
 
-    def _run(self, args: Sequence[str], project: PyProject) -> int:
+    def _run(self, project: PyProject, args: Sequence[str]) -> int:
         assert self.cmd
         args = [*self.cmd, *args]
         if not self.executable:
@@ -356,9 +349,9 @@ class Task:
         return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode
 
     @staticmethod
-    def _run_tasks(tasks: Sequence[tuple[Task, Sequence[str]]], project: PyProject) -> int:
+    def _run_tasks(project: PyProject, tasks: Sequence[tuple[Task, Sequence[str]]]) -> int:
         for task, args in tasks:
-            returncode = task.run(args, project)
+            returncode = task.run(project, args)
             if returncode:
                 return returncode
         return 0

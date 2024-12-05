@@ -1,6 +1,7 @@
 import functools
+import re
 import string
-from typing import Any, Callable, Iterator, no_type_check
+from typing import Any, Callable, Iterator, Literal, no_type_check
 
 import hypothesis
 from hypothesis import strategies as st
@@ -10,6 +11,9 @@ from pyproject_runner import environment
 
 
 AdjEnv = Callable[[dict[str, str]], dict[str, str]]
+TokenPair = tuple[str, environment.TokenType]
+TokenPairs = list[TokenPair]
+TokenList = st.SearchStrategy[TokenPairs]
 
 
 @pytest.fixture(params=[False, True])
@@ -50,9 +54,9 @@ def test_fragment(init_value: Any, expected: str, expandable: bool, adjust_env_c
 
 
 @no_type_check
-def tokens() -> st.SearchStrategy[list[tuple[str, str]]]:
-    def limit_values(items: list[tuple[str, str]]) -> bool:
-        previous_item = '', ''
+def tokens() -> TokenList:
+    def limit_quotes(items: TokenPairs) -> bool:
+        previous_item: TokenPair = '\n', 'NEWLINE'
         for i, item in enumerate(items):
             match previous_item, item:
                 case ('"', 'DQUOTE'), ('"', 'DQUOTE') if i > 1 and items[i - 2] == item:
@@ -62,85 +66,99 @@ def tokens() -> st.SearchStrategy[list[tuple[str, str]]]:
                 case ('"', 'DQUOTE'), ('"""', 'DQUOTE'):
                     return False  # A single next to a triple double-quote
                 case ("'", 'SQUOTE'), ("'''", 'SQUOTE'):
-                    return False  # A single next to ao triple single-quote
+                    return False  # A single next to a triple single-quote
             previous_item = item
-
-        match items:
-            case [(text, 'TEXT'), *_] if not text or text[0].isspace():
-                return False  # whitespace at the beginning of the text
-            case [*_, (text, 'TEXT')] if not text or text[-1].isspace():
-                return False  # White space at the end of the text
-
         return True
 
-    def merge_text(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        result: list[tuple[str, str]] = []
-        previous_item = '', ''
+    def merge_dups(items: TokenPairs) -> TokenPairs:
+        result: TokenPairs = []
+        previous_item: TokenPair = '\n', 'NEWLINE'
         for item in items:
             match previous_item, item:
-                case (string1, 'TEXT'), (string2, 'TEXT'):
+                case (string1, type1), (string2, type2) if type1 == type2 and type1 in ['TEXT', 'WS']:
                     result.pop(-1)
-                    item = (string1 + string2, 'TEXT')
+                    item = string1 + string2, type1
             result.append(item)
             previous_item = item
         return result
 
+    def quantify(strategy: Callable[[], TokenList]) -> Callable[..., TokenList]:
+        def _quantify(how: Literal['?', '*', '+'] | None = None) -> TokenList:
+            match how:
+                case '?':
+                    return st.just([]) | strategy()
+                case '*':
+                    return st.just([]) | st.recursive(s := strategy(), lambda x: concat(x, s))
+                case '+':
+                    return st.recursive(s := strategy(), lambda x: concat(x, s))
+                case None:
+                    return strategy()
+                case _:
+                    raise NotImplementedError(how)
+        return _quantify
 
-    tag = lambda s, type='TEXT': s.map(lambda t: [(t, type)] if t else [])
+    def token(type: environment.TokenType, strategy: Callable[[], st.SearchStrategy[str]]) -> Callable[..., TokenList]:
+        return quantify(lambda: strategy().map(lambda t: [(t, type)]))
 
-    merge = functools.partial(st.builds, lambda *args: functools.reduce(lambda x, y: x + y, args, []))
-    zero_or_one = lambda s: st.just([]) | s
-    one_or_more = lambda s: st.recursive(s, lambda x: merge(x, s))
+    name_re = re.compile(r'(?ai:(?:^|(?<=\s|\n))([a-z_][a-z0-9_]*))')
 
-    characters = functools.partial(st.characters, codec='utf-8')
-    ws = functools.partial(st.text, ' \t\r\f\v')
-    text = lambda exclude=None, min_size=0, max_size=None: st.text(
-        characters(exclude_characters=exclude),
-        min_size=min_size, max_size=max_size)
+    @st.composite
+    def TEXT(draw: Callable[[st.SearchStrategy[str]], str]) -> TokenPairs:
+        string = draw(st.text(
+            st.characters(codec='utf-8', exclude_characters=' \t\r\f\v\n#=\\"\''), min_size=1))
+        return [(s, 'NAME' if i % 2 else 'TEXT')
+                for i, s in enumerate(name_re.split(string)) if s]
+
+    concat = functools.partial(st.builds, lambda *args: functools.reduce(lambda x, y: x + y, args, []))
 
     # Reproduces the grammar in the environment module
-    single_quote = lambda: st.just([("'", 'SQUOTE')])
-    double_quote = lambda: st.just([('"', 'DQUOTE')])
-    newline = lambda: st.just([('\n', 'NEWLINE')])
-    escaped = lambda: st.builds(lambda t: [(fr'\{t}', 'ESCAPE')], text(min_size=1, max_size=1))
-    unquoted = lambda: tag(text('\\"\'\n', min_size=1)) | escaped()
-    single_quoted = lambda: st.one_of(
-        st.builds(lambda x: [q := ("'", 'SQUOTE'), *x, q],
-                  tag(text("\\\n\"'", min_size=1)) | escaped() | double_quote() | newline()),
-        st.builds(lambda x: [q := ("'''", 'SQUOTE'), *x, q],
-                  tag(text("\\\n\"'", min_size=1)) | escaped() | single_quote() | double_quote() | newline()),
-    )
-    double_quoted = lambda: st.one_of(
-        st.builds(lambda x: [q := ('"', 'DQUOTE'), *x, q],
-                  tag(text('\\\n\'"', min_size=1)) | escaped() | single_quote() | newline()),
-        st.builds(lambda x: [q := ('"""', 'DQUOTE'), *x, q],
-                  tag(text('\\\n\'"', min_size=1)) | escaped() | single_quote() | double_quote() | newline()),
-    )
-    value = lambda: one_or_more(double_quoted() | single_quoted() | unquoted()).map(merge_text).filter(limit_values)
-    comment = lambda ws: tag(st.builds('{}#{}'.format, ws, text('\n')), 'COMMENT')
-    name = lambda: st.builds(
+    ESCAPE = token('ESCAPE', lambda: st.builds('\\{}'.format, st.text(min_size=1, max_size=1)))
+    ASSIGN = token('ASSIGN', lambda: st.just('='))
+    COMMENT = token('COMMENT', lambda: st.just('#'))
+    DQUOTE = token('DQUOTE', lambda: st.just('"') | st.just('"""'))
+    NEWLINE = token('NEWLINE', lambda: st.just('\n'))
+    SQUOTE = token('SQUOTE', lambda: st.just("'") | st.just("'''"))
+    WS = lambda how=None: st.text(' \t\r\f\v', **{
+        '?': {'max_size': 1},
+        '*': {},
+        '+': {'min_size': 1},
+        None: {'min_size': 1, 'max_size': 1},
+    }[how]).map(lambda t: [(t, 'WS')] if t else [])
+
+    NAME = token('TEXT', lambda: st.builds(
         str.__add__,
         st.text(string.ascii_letters + '_', min_size=1, max_size=1),
         st.text(string.ascii_letters + string.digits + '_'),
+    ))
+    TEXT = token('TEXT', lambda: st.text(
+        st.characters(codec='utf-8', exclude_characters=' \t\r\f\v\n#=\\"\''), min_size=1))
+
+
+    _ = quantify
+    not_quote = lambda: ASSIGN() | COMMENT() | TEXT() | WS()
+    not_single_quote = _(lambda: ESCAPE() | ASSIGN() | COMMENT() | NEWLINE() | DQUOTE() | TEXT() | WS())
+    not_double_quote = lambda: ESCAPE() | ASSIGN() | COMMENT() | NEWLINE() | SQUOTE() | TEXT() | WS()
+    not_newline = _(lambda: ESCAPE() | ASSIGN() | COMMENT() | DQUOTE() | SQUOTE() | TEXT() | WS())
+    escaped = ESCAPE
+    unquoted = lambda: _(lambda: not_quote() | ESCAPE())('+')
+    single_quoted = lambda: st.one_of(
+        st.builds(lambda x: [q := ("'", 'SQUOTE'), *x, q], not_single_quote('*')),
+        st.builds(lambda x: [q := ("'''", 'SQUOTE'), *x, q], not_single_quote('*')),
     )
-    _assign = lambda min_ws: tag(st.builds(
-        lambda *args: ''.join(args), ws(), name(), ws(), st.just('='), ws(min_size=min_ws)), 'ASSIGN')
-    assignment = lambda: st.one_of(
-        merge(_assign(0), value(), comment(ws(min_size=1))),
-        merge(_assign(0), zero_or_one(value())),
-        merge(_assign(1), comment(st.just(''))),
+    double_quoted = lambda: st.one_of(
+        st.builds(lambda x: [q := ('"', 'DQUOTE'), *x, q], _(lambda: not_double_quote() | escaped())('*')),
+        st.builds(lambda x: [q := ('"""', 'DQUOTE'), *x, q], _(lambda: not_double_quote() | escaped())('*')),
     )
-    expression = lambda: st.one_of(
-        merge(assignment() | comment(ws()), newline()),
-        st.builds(lambda t: [(f'{t}\n', 'NEWLINE')], ws()),
-    )
+    value = lambda: _(lambda: double_quoted() | single_quoted() | unquoted())('*')
+    comment = lambda: concat(COMMENT(), not_newline('*'))
+    assignment = lambda: concat(WS('*'), NAME(), WS('*'), ASSIGN(), WS('*'), value(),
+                               _(lambda: concat(WS('+'), comment()))('?'))
+    expression = lambda: concat(assignment() | comment() | WS('*'), NEWLINE()).map(merge_dups).filter(limit_quotes)
 
     return expression()
 
 
 @hypothesis.given(tokens())
-@hypothesis.example([(' ', 'TEXT')])
-@hypothesis.example([(' ABC ', 'TEXT')])
 def test_tokenize(expected_tokens: list[tuple[str, str]]) -> None:
     expr = ''.join(text for text, _ in expected_tokens)
     for token, (expected_value, expected_type) in zip(
@@ -152,14 +170,18 @@ def test_tokenize(expected_tokens: list[tuple[str, str]]) -> None:
 @hypothesis.given(st.builds(lambda toks: ''.join(s for s, _ in toks), tokens()))
 @hypothesis.example(' ')
 @hypothesis.example('A=\\\nB=2')
+@hypothesis.example('A=" #" #')
+@hypothesis.example('A=$foo=bar')
 def test_parse(expr: str) -> None:
     tuple(environment.parse(expr))
 
 
 @pytest.mark.parametrize('text, error', [
-    ('ABC', 'Unexpected token'),
-    ('ABC="123', 'Unterminated quote'),
-    ('ABC=123"', 'Unterminated quote'),
+    ('ABC', 'invalid syntax'),
+    ('= XYZ', 'unexpected token'),
+    ('ABC XYZ', 'unexpected token'),
+    ('ABC="123', 'unterminated quote'),
+    ('ABC=123"', 'unterminated quote'),
 ])
 def test_parse_invalid(text: str, error: str) -> None:
     with pytest.raises(SyntaxError, match=error):
@@ -215,6 +237,7 @@ foo=\
 bar=43
 some=this is the $PATH
 none=this $does not ${exist}
+quoted_comment = " # this is not a comment" # but this is
 
 escaped = \$do $\{not} ${expand\}
 ''' """
@@ -242,6 +265,7 @@ also ignore $PATH expansion
         'mixed': 'this is quoted in multiple ways',
         'multiline': 'one\n two =\n    three\n    ',
         'none': 'this  not ',
+        'quoted_comment': ' # this is not a comment',
         'second': '2nd',
         'some': 'this is the /usr/bin:/bin',
         'trailer': 'some text here',
