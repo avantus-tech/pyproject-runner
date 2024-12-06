@@ -86,7 +86,7 @@ prefix the `rr` command with `uv run` if the virtual environment is not activate
 
 ## Configuration
 
-Tasks are configured in the `tool.pyproject-runner.tasks` table in the *pyproject.toml* file.
+pyproject-runner is configured using the `tool.pyproject-runner` table in the *pyproject.toml* file.
 
 ### `tool.pyproject-runner.tasks`
 
@@ -182,6 +182,16 @@ name when the `-l/--list` option is used.
 devserver = { cmd = "flask run --app ./hello.py --debug", help = "Start a development server in debug mode" }
 ```
 
+### `tool.uv.managed`
+
+Optional setting for projects that are not using uv.
+
+Set to `false` for projects not using uv or when uv is not managing the virtual environment,
+indicating that the `VIRTUAL_ENV` environment variable will be used to find an alternate path
+for the virtual environment. It is unnecessary to set this if the default `.venv` is used.
+
+See the [uv documentation](https://docs.astral.sh/uv/reference/settings/#managed) for more information on this setting.
+
 ### Environment file syntax
 
 Environment variables may be loaded from a file or string, expanding variables as needed. The
@@ -263,6 +273,8 @@ UV_PROJECT_ENVIRONMENT
 : Specifies the path to the directory to use for a project virtual environment (see
   [uv's documentation](https://docs.astral.sh/uv/configuration/environment/#uv_project_environment) for more info).
 
+VIRTUAL_ENV
+: Specifies the path to the project's virtual environment. Ignored unless `tool.uv.managed` is set to `false`.
 
 ## Execution environment
 
@@ -354,7 +366,7 @@ Below is a list of features that might be implemented in the future (no guarante
  - [ ] Shell completion
  - [ ] Define common environment variables in [tool.pyproject-runner.environment]?
  - [ ] Environment variable expansion in task definitions
- - [ ] Add ability to create shims for tasks
+ - [ ] Add ability to create shims for tasks and/or scripts
 
 Do you have additional feature requests? Submit an issue or pull request.
 

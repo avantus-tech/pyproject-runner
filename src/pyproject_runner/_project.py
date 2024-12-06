@@ -97,7 +97,12 @@ class Project(Protocol):
 
     @property
     def venv_path(self) -> Path:
-        project_venv = os.environ.get("UV_PROJECT_ENVIRONMENT")
+        project_venv: str | None
+        match self.doc:
+            case {'tool': {'uv': {'managed': False}}}:
+                project_venv = os.environ.get('VIRTUAL_ENV')
+            case _:
+                project_venv = os.environ.get("UV_PROJECT_ENVIRONMENT")
         if project_venv:
             return Path(project_venv)
         return self.root / '.venv'
