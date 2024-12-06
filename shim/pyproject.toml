@@ -28,5 +28,5 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 include = [
-    'rr.py'
+    "rr.py"
 ]

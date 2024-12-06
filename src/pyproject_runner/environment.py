@@ -1,4 +1,4 @@
-"""Parse an environment file or string.
+r"""Parse an environment file or string.
 
 Load environment variables from a file or string, expanding variables as
 needed. The syntax is similar to bash syntax, but simplified and relaxed.
@@ -47,46 +47,49 @@ Syntax:
 from __future__ import annotations
 
 import collections
+from collections.abc import Iterator, Mapping
 import dataclasses
 import os
 import re
-from typing import Any, cast, Final, Iterator, Literal, Mapping, NamedTuple
+from typing import Any, Final, Literal, cast
 
-__all__ = 'evaluate', 'expand'
+from typing_extensions import Self
 
-
-_UPPERCASE_ENV: Final = os.name == 'nt'
-
-
-TokenType = Literal['ASSIGN', 'COMMENT', 'DQUOTE', 'ESCAPE',
-                    'NEWLINE', 'SQUOTE', 'TEXT', 'WS']
+__all__ = "evaluate", "expand"
 
 
-WS: Final = r'[ \t\r\f\v]'  # White space minus newline
+_UPPERCASE_ENV: Final = os.name == "nt"
+
+
+TokenType = Literal["ASSIGN", "COMMENT", "DQUOTE", "ESCAPE",
+                    "NEWLINE", "SQUOTE", "TEXT", "WS"]
+
+
+WS: Final = r"[ \t\r\f\v]"  # White space minus newline
 TOKENS: Final[tuple[tuple[TokenType, str], ...]] = (
-    ('ESCAPE', r'\\(?s:.)'),
-    ('ASSIGN', '='),
-    ('COMMENT', '#'),
-    ('DQUOTE', '"""|"'),
-    ('NEWLINE', '\n'),
-    ('SQUOTE', "'''|'"),
-    ('WS', f'[ \t\r\f\v]+'),  # Whitespace minus newline
+    ("ESCAPE", r"\\(?s:.)"),
+    ("ASSIGN", "="),
+    ("COMMENT", "#"),
+    ("DQUOTE", '"""|"'),
+    ("NEWLINE", "\n"),
+    ("SQUOTE", "'''|'"),
+    ("WS", r"[ \t\r\f\v]+"),  # Whitespace minus newline
 )
-SPLIT_RE: Final = re.compile('|'.join(f'(?P<{kind}>{pattern})'
+SPLIT_RE: Final = re.compile("|".join(f"(?P<{kind}>{pattern})"
                                       for kind, pattern in TOKENS),
                              re.MULTILINE)
-EXPAND_RE: Final = re.compile(r'\$(\{)?(?P<name>(?ai:[a-z_][a-z0-9_]*))(?(1)})', re.MULTILINE)
+EXPAND_RE: Final = re.compile(r"\$(\{)?(?P<name>(?ai:[a-z_][a-z0-9_]*))(?(1)})", re.MULTILINE)
 
 
 class Fragment(str):
     """String fragment of variable assignment value."""
 
-    __slots__ = 'expandable', 'whitespace'
+    __slots__ = "expandable", "whitespace"
 
     expandable: bool
     whitespace: bool
 
-    def __new__(cls, value: Any, expandable: bool, *, whitespace: bool = False) -> Fragment:
+    def __new__(cls, value: Any, *, expandable: bool = False, whitespace: bool = False) -> Self:
         obj = super().__new__(cls, value)
         obj.expandable = expandable
         obj.whitespace = whitespace
@@ -100,10 +103,10 @@ class Fragment(str):
         objects with a truthy .expandable attribute are expanded.
         """
         def repl(match: re.Match[str]) -> str:
-            name = match.group('name')
+            name = match.group("name")
             if _UPPERCASE_ENV:
                 name = name.upper()
-            return env.get(name) or ''
+            return env.get(name) or ""
 
         if self.expandable:
             return EXPAND_RE.sub(repl, self)
@@ -113,6 +116,7 @@ class Fragment(str):
 @dataclasses.dataclass(slots=True)
 class Token:
     """Represents a token in the parsed string."""
+
     type: TokenType
     value: str
     _: dataclasses.KW_ONLY
@@ -122,7 +126,6 @@ class Token:
 
 def tokenize(text: str) -> Iterator[Token]:
     """Iterate tokens in a string."""
-
     kind: TokenType
     line = 1
     # Because the text can be a string with embedded newlines, line numbers
@@ -137,17 +140,17 @@ def tokenize(text: str) -> Iterator[Token]:
         column = start - line_start
         if start > previous_end:
             # Yield any text between matches
-            yield Token('TEXT', text[previous_end:start],
+            yield Token("TEXT", text[previous_end:start],
                         line=line, column=previous_end - line_start)
         previous_end = match.end()
         yield Token(kind, value, line=line, column=column)
-        if kind == 'NEWLINE':
+        if kind == "NEWLINE":
             line += 1
             line_start = start
 
     if previous_end < len(text):
         # Yield any text after the last match
-        yield Token('TEXT', text[previous_end:],
+        yield Token("TEXT", text[previous_end:],
                     line=line, column=previous_end - line_start)
 
 
@@ -159,15 +162,16 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
     tokens = tokenize(text)
 
     def assignment(token: Token) -> list[Fragment]:
-        for token in tokens:
+        # Token is passed in just in case tokens is exhausted
+        for token in tokens:  # noqa: PLR1704
             match token:
-                case Token('WS'):
+                case Token("WS"):
                     pass  # Discard
-                case Token('ASSIGN'):
+                case Token("ASSIGN"):
                     return assignment_value()
                 case _:
-                    raise syntax_error('unexpected token', token)
-        raise syntax_error('invalid syntax', Token('TEXT', '', line=token.line,
+                    raise syntax_error("unexpected token", token)
+        raise syntax_error("invalid syntax", Token("TEXT", "", line=token.line,
                                                    column=token.column + len(token.value)))
 
     def assignment_value() -> list[Fragment]:
@@ -176,28 +180,28 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
         comment = False
         for token in tokens:
             match token:
-                case Token('NEWLINE'):
+                case Token("NEWLINE"):
                     break  # discard
                 case _ if comment:
                     # Cannot escape a newline in a comment
-                    if token.type == 'ESCAPE' and token.value[-1] == '\n':
+                    if token.type == "ESCAPE" and token.value[-1] == "\n":
                         break
-                case Token('COMMENT', value):
+                case Token("COMMENT", value):
                     if fragments and fragments[-1].whitespace:
                         comment = True
                     else:
-                        fragments.append(Fragment(value, False))
-                case Token('WS', value):
-                    fragments.append(Fragment(value, False, whitespace=True))
-                case Token('NAME' | 'ASSIGN', value):
+                        fragments.append(Fragment(value))
+                case Token("WS", value):
+                    fragments.append(Fragment(value, whitespace=True))
+                case Token("NAME" | "ASSIGN", value):
                     # Treat assignments within assignments as un-expandable text
-                    fragments.append(Fragment(value, False))
-                case Token('TEXT', value):
-                    fragments.append(Fragment(value, True))
-                case Token('SQUOTE' | 'DQUOTE'):
+                    fragments.append(Fragment(value))
+                case Token("TEXT", value):
+                    fragments.append(Fragment(value, expandable=True))
+                case Token("SQUOTE" | "DQUOTE"):
                     fragments += quoted(token)
-                case Token('ESCAPE', value):
-                    fragments.append(Fragment(value[1:], False))
+                case Token("ESCAPE", value):
+                    fragments.append(Fragment(value[1:]))
                 case _:  # pragma: no cover
                     raise NotImplementedError(token)
         # Remove leading and trailing whitespace
@@ -215,32 +219,33 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
         empty = True
         for token in tokens:
             match token:
-                case Token('DQUOTE' | 'SQUOTE' as kind, value) if kind == quote.type and value == quote.value:
+                case Token("DQUOTE" | "SQUOTE" as kind, value) if (
+                        kind == quote.type and value == quote.value):
                     if empty:
-                        yield Fragment('', False)  # Handle empty string
+                        yield Fragment("")  # Handle empty string
                     return  # End quoted string
-                case Token('ESCAPE', value) if quote.type == 'SQUOTE':
+                case Token("ESCAPE", value) if quote.type == "SQUOTE":
                     if value[1:] == quote.value:
                         # Escaped single-quote (\') in single-quoted string should not be escaped.
                         # It instead ends the string with the backslash as the last character.
-                        yield Fragment(value[:1], False)
+                        yield Fragment(value[:1])
                         return
                     # Return the unescaped string when in single-quotes
-                    yield Fragment(value, False)
-                case Token('ESCAPE', value):
+                    yield Fragment(value)
+                case Token("ESCAPE", value):
                     # Return character after escape in double-quoted strings
-                    yield Fragment(value[1:], False)
+                    yield Fragment(value[1:])
                 case Token(_, value):
-                    yield Fragment(value, quote.type == 'DQUOTE')
+                    yield Fragment(value, expandable=quote.type == "DQUOTE")
                 case _:  # pragma: no cover
                     raise NotImplementedError(token)
             empty = False
-        raise syntax_error('unterminated quote', quote)
+        raise syntax_error("unterminated quote", quote)
 
     def syntax_error(msg: str, token: Token) -> SyntaxError:
         """Build and return a SyntaxError exception instance."""
         error = SyntaxError(msg)
-        error.text = text.splitlines(True)[token.line - 1]
+        error.text = text.splitlines(keepends=True)[token.line - 1]
         error.lineno = token.line
         error.offset = token.column + 1
         error.end_offset = error.offset + len(token.value)
@@ -250,20 +255,20 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
     comment = False
     for token in tokens:
         match token:
-            case Token('NEWLINE'):
+            case Token("NEWLINE"):
                 comment = False  # Discard
             case _ if comment:
                 # Cannot escape a newline in a comment
-                if token.type == 'ESCAPE' and token.value[-1] == '\n':
+                if token.type == "ESCAPE" and token.value[-1] == "\n":
                     comment = False
-            case Token('COMMENT'):
+            case Token("COMMENT"):
                 comment = True  # Discard
-            case Token('WS'):
+            case Token("WS"):
                 pass  # Discard
-            case Token('TEXT', value) if value.isidentifier():
+            case Token("TEXT", value) if value.isidentifier():
                 yield value, assignment(token)
             case _:
-                raise syntax_error('unexpected token', token)
+                raise syntax_error("unexpected token", token)
 
 
 def evaluate(text: str, env: Mapping[str, str | None]) -> dict[str, str | None]:
@@ -282,7 +287,7 @@ def evaluate(text: str, env: Mapping[str, str | None]) -> dict[str, str | None]:
         if not fragments:
             value: str | None = None
         else:
-            value = ''.join(s.expand(env) for s in fragments)
+            value = "".join(s.expand(env) for s in fragments)
         updates[name] = value
     return updates
 
@@ -298,32 +303,31 @@ def expand(text: str, env: Mapping[str, str | None]) -> dict[str, str]:
     return {k: v for k, v in updates.items() if v is not None}
 
 
-if __name__ == '__main__':
-    from typing import IO
+if __name__ == "__main__":
 
     import click
 
     @click.command(
         context_settings={
-            'max_content_width': 120,
-            'help_option_names': ['-h', '--help']
+            "max_content_width": 120,
+            "help_option_names": ["-h", "--help"],
         },
     )
-    @click.argument('strings', nargs=-1)
+    @click.argument("strings", nargs=-1)
     def main(strings: tuple[str, ...]) -> None:
         """Show the results of processing an environment file."""
         env = os.environ.copy()
         for text in strings:
-            if text.startswith('@'):
-                with click.open_file(text[1:], encoding='utf-8') as file:
+            if text.startswith("@"):
+                with click.open_file(text[1:], encoding="utf-8") as file:
                     text = file.read()
             updates = evaluate(text, env)
             for name, value in updates.items():
                 if value is None:
-                    click.echo(f'unset {name}')
+                    click.echo(f"unset {name}")
                     env.pop(name, None)
                 else:
-                    click.echo(f'{name} = {value!r}')
+                    click.echo(f"{name} = {value!r}")
                     env[name] = value
 
     main()

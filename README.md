@@ -380,8 +380,7 @@ Do you have additional feature requests? Submit an issue or pull request.
     - Both were designed around Poetry.
     - Neither offer a shim to simplify use under uv.
   + pyproject-runner was created to solve those issues, and offers the following benefits:
-    - It has only one dependency for Python >= 3.11, or two for Python 3.10, pinned only to the
-      lowest compatible version.
+    - It has few dependencies pinned to the lowest compatible version.
     - It makes it easy to move from Rye to uv, or to use with new uv projects.
     - Offers a shim to reduce typing.
     - It's simple, fast, and small, with less than 1000 lines of code.
