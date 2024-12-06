@@ -1,20 +1,22 @@
 from __future__ import annotations
 
-from pathlib import Path
 import os
+from pathlib import Path
 import re
 import shlex
 import shutil
 import subprocess
 import sys
-if sys.version_info < (3, 11):
-    import tomli as tomllib
-else:
+
+if sys.version_info >= (3, 11):
     import tomllib
-from typing import Any, cast, Final, Iterator, Mapping, overload, Protocol, Sequence
+else:
+    import tomli as tomllib
+
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Any, Final, Protocol, cast, overload
 
 from . import environment
-
 
 # Paths associated with tasks are manipulated as strings using os.path, rather than pathlib,
 # because a leading ./ is significant, and pathlib removes it when normalizing. This is especially
@@ -22,18 +24,18 @@ from . import environment
 
 if sys.platform == "win32":
     VENV_BIN: Final = "Scripts"
-    SEP: Final = r'[\\/]'
-    
+    SEP: Final = r"[\\/]"
+
     def external_scripts(path: Path) -> Iterator[str]:
         return (path.stem for path in path.iterdir()
-                if path.is_file() and path.suffix.lower() in ('.exe', '.bat')
+                if path.is_file() and path.suffix.lower() in {".exe", ".bat"}
                 and not is_unsafe_script(path))
 
     def is_unsafe_script(path: Path) -> bool:
-        return path.stem in {'activate', 'deactivate'}
+        return path.stem in {"activate", "deactivate"}
 else:
     VENV_BIN: Final = "bin"
-    SEP: Final = '/'
+    SEP: Final = "/"
 
     def external_scripts(path: Path) -> Iterator[str]:
         return (path.name for path in path.iterdir()
@@ -41,10 +43,10 @@ else:
                 and not is_unsafe_script(path))
 
     def is_unsafe_script(path: Path) -> bool:
-        return path.suffix in ('.dylib', '.so')
+        return path.suffix in {".dylib", ".so"}
 
 
-ROOT_TEST: Final = re.compile(rf'^!(?:{SEP}|$)')
+ROOT_TEST: Final = re.compile(rf"^!(?:{SEP}|$)")
 
 
 def build_path(path: str | None, parent: str | Path) -> str | None:
@@ -55,8 +57,8 @@ def build_path(path: str | None, parent: str | Path) -> str | None:
     """
     if not path:
         return None
-    elif match := ROOT_TEST.match(path):
-        return os.path.join(parent, path[match.regs[0][1]:])
+    if match := ROOT_TEST.match(path):
+        return str(Path(parent, path[match.regs[0][1]:]))
     return path
 
 
@@ -78,13 +80,13 @@ class Project(Protocol):
         if entry:
             try:
                 return Task.parse(entry)
-            except ValueError as exc:
-                raise TaskLookupError(f'{name!r} is an invalid task')
+            except ValueError:
+                raise TaskLookupError(f"{name!r} is an invalid task")
         else:
             executable = shutil.which(name, path=self.venv_bin_path)
             if executable and not is_unsafe_script(Path(executable)):
                 return Task(name, executable=executable)
-        raise TaskLookupError(f'{name!r} is an unknown task')
+        raise TaskLookupError(f"{name!r} is an unknown task")
 
     def _tasks(self) -> Mapping[str, Any]:
         match self.doc:
@@ -99,13 +101,13 @@ class Project(Protocol):
     def venv_path(self) -> Path:
         project_venv: str | None
         match self.doc:
-            case {'tool': {'uv': {'managed': False}}}:
-                project_venv = os.environ.get('VIRTUAL_ENV')
+            case {"tool": {"uv": {"managed": False}}}:
+                project_venv = os.environ.get("VIRTUAL_ENV")
             case _:
                 project_venv = os.environ.get("UV_PROJECT_ENVIRONMENT")
         if project_venv:
             return Path(project_venv)
-        return self.root / '.venv'
+        return self.root / ".venv"
 
     @property
     def venv_bin_path(self) -> Path:
@@ -113,14 +115,14 @@ class Project(Protocol):
 
     @property
     def venv_python_bin(self) -> Path:
-        path = self.venv_bin_path / 'python'
+        path = self.venv_bin_path / "python"
         if sys.platform == "win32":
-            path = path.with_suffix('.exe')
+            path = path.with_suffix(".exe")
         return path
 
 
 class PyProject(Project):
-    __slots__ = 'name', 'root', 'doc', '_workspace'
+    __slots__ = "_workspace", "doc", "name", "root"
 
     def __init__(self, name: str, root: Path, doc: Mapping[str, Any]) -> None:
         self.name: Final = name
@@ -133,11 +135,11 @@ class PyProject(Project):
         match document:
             case {"project": {"name": str(name)}}:
                 return cls(name, root, doc=document)
-        raise ValueError('invalid python project document')
+        raise ValueError("invalid python project document")
 
     def __repr__(self) -> str:
-        args = f'name={self.name!r}, root={self.root!r}, doc={self.doc!r}'
-        return f'{self.__class__.__module__}.{self.__class__.__qualname__}({args})'
+        args = f"name={self.name!r}, root={self.root!r}, doc={self.doc!r}"
+        return f"{self.__class__.__module__}.{self.__class__.__qualname__}({args})"
 
     @classmethod
     def discover(cls, path: Path) -> PyProject | None:
@@ -155,7 +157,7 @@ class PyProject(Project):
 
     @classmethod
     def load(cls, project_file: Path) -> PyProject:
-        with project_file.open('rb') as file:
+        with project_file.open("rb") as file:
             doc = tomllib.load(file)
         return cls.from_project_document(doc, project_file.parent)
 
@@ -194,7 +196,7 @@ class PyProject(Project):
 
 
 class Workspace(Project):
-    __slots__ = 'name', 'root', 'doc', 'members'
+    __slots__ = "doc", "members", "name", "root"
 
     def __init__(self, name: str, root: Path,
                  doc: Mapping[str, Any], members: Sequence[Path]) -> None:
@@ -204,8 +206,8 @@ class Workspace(Project):
         self.members: Final = members
 
     def __repr__(self) -> str:
-        args = f'name={self.name!r}, root={self.root!r}, doc={self.doc!r}, members={self.members!r}'
-        return f'{self.__class__.__module__}.{self.__class__.__qualname__}({args})'
+        args = f"name={self.name!r}, root={self.root!r}, doc={self.doc!r}, members={self.members!r}"
+        return f"{self.__class__.__module__}.{self.__class__.__qualname__}({args})"
 
     @classmethod
     def from_pyproject(cls, project: PyProject) -> Workspace | None:
@@ -216,15 +218,15 @@ class Workspace(Project):
             case _:
                 return None
         match workspace:
-            case {"members": [*_members]}:
-                members = tuple(path for mem in _members if isinstance(mem, str)
+            case {"members": [*mems]}:
+                members = tuple(path for mem in mems if isinstance(mem, str)
                                 for path in root.glob(mem))
             case _:
                 return None
         match workspace:
-            case {"exclude": [*_exclude]}:
-                exclude = set(path for mem in _exclude if isinstance(mem, str)
-                              for path in root.glob(mem))
+            case {"exclude": [*exclusions]}:
+                exclude = {path for mem in exclusions if isinstance(mem, str)
+                           for path in root.glob(mem)}
             case _:
                 exclude = set()
         members = tuple(m for m in members if m not in exclude)
@@ -232,7 +234,7 @@ class Workspace(Project):
 
 
 class Task:
-    __slots__ = 'cmd', 'cwd', 'env', 'env_file', 'help', 'executable', 'pre', 'post'
+    __slots__ = "cmd", "cwd", "env", "env_file", "executable", "help", "post", "pre"
 
     @overload
     def __init__(self, cmd: str, *, executable: str) -> None: ...
@@ -247,7 +249,7 @@ class Task:
     def __init__(self, cmd: str | Sequence[str] | None, *, cwd: str | None = None,
                  env: str | Mapping[str, str] | None = None,
                  env_file: str | Sequence[str] | None = None,
-                 help: str | None = None,
+                 help: str | None = None,  # noqa: A002
                  executable: str | None = None,
                  pre: Sequence[Sequence[str]] | None = None,
                  post: Sequence[Sequence[str]] | None = None) -> None:
@@ -271,7 +273,7 @@ class Task:
         for name in self.__slots__:
             value = getattr(self, name)
             if value is not None:
-                args.append(f'{name}={getattr(self, name)!r}')
+                args.append(f"{name}={getattr(self, name)!r}")
         return f'{self.__class__.__module__}.{self.__class__.__qualname__}({", ".join(args)})'
 
     def to_dict(self) -> dict[str, Any]:
@@ -280,21 +282,21 @@ class Task:
 
     def _get_environment(self, project: PyProject) -> dict[str, str]:
         env = os.environ.copy()
-        env['VIRTUAL_ENV'] = str(project.venv_path)
-        env['VIRTUAL_ENV_BIN'] = str(project.venv_bin_path)
-        env['INITIAL_DIR'] = os.getcwd()
-        env['PROJECT_DIR'] = str(project.root)
+        env["VIRTUAL_ENV"] = str(project.venv_path)
+        env["VIRTUAL_ENV_BIN"] = str(project.venv_bin_path)
+        env["INITIAL_DIR"] = str(Path.cwd())
+        env["PROJECT_DIR"] = str(project.root)
         workspace = project.workspace
         if workspace is not None:
-            env['WORKSPACE_DIR'] = str(workspace.root)
+            env["WORKSPACE_DIR"] = str(workspace.root)
         else:
-            env.pop('WORKSPACE_DIR', None)
+            env.pop("WORKSPACE_DIR", None)
         try:
-            path = env['PATH']
+            path = env["PATH"]
         except KeyError:
-            env['PATH'] = str(project.venv_bin_path)
+            env["PATH"] = str(project.venv_bin_path)
         else:
-            env['PATH'] = f'{project.venv_bin_path}{os.pathsep}{path}'
+            env["PATH"] = f"{project.venv_bin_path}{os.pathsep}{path}"
 
         if isinstance(self.env, str):
             env = environment.expand(self.env, env)
@@ -313,23 +315,25 @@ class Task:
         for env_path in env_file:
             env_path = build_path(env_path, project.root)
             if env_path:
-                with open(env_path, encoding='utf-8') as file:
+                with Path(env_path).open(encoding="utf-8") as file:
                     text = file.read()
                 env = environment.expand(text, env)
 
-        env.pop('PYTHONHOME', None)
+        env.pop("PYTHONHOME", None)
         return env
 
     def run(self, project: PyProject, args: Sequence[str]) -> int:
         # Look up tasks before attempting to run them
         try:
-            pre_tasks = [(project.task(name), args) for name, *args in self.pre] if self.pre else None
+            pre_tasks = [(project.task(name), args)
+                         for name, *args in self.pre] if self.pre else None
         except TaskLookupError:
-            raise TaskLookupError('pre task lookup failed')
+            raise TaskLookupError("pre task lookup failed")
         try:
-            post_tasks = [(project.task(name), args) for name, *args in self.post] if self.post else None
+            post_tasks = [(project.task(name), args)
+                          for name, *args in self.post] if self.post else None
         except TaskLookupError:
-            raise TaskLookupError('post task lookup failed')
+            raise TaskLookupError("post task lookup failed")
 
         # Execute pre-tasks, then this task, followed by post-tasks, stopping on any error
         returncode = 0
@@ -342,16 +346,16 @@ class Task:
         return returncode
 
     def _run(self, project: PyProject, args: Sequence[str]) -> int:
-        assert self.cmd
+        assert self.cmd  # noqa: S101
         args = [*self.cmd, *args]
         if not self.executable:
             exe = args[0]
             path = build_path(exe, project.root)
-            assert path
+            assert path  # noqa: S101
             args[0] = path
         cwd = build_path(self.cwd, project.root)
         env = self._get_environment(project)
-        return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode
+        return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode  # noqa: S603
 
     @staticmethod
     def _run_tasks(project: PyProject, tasks: Sequence[tuple[Task, Sequence[str]]]) -> int:
@@ -367,12 +371,14 @@ class Task:
         match entry:
             case str(cmd) | {"cmd": str(cmd)}:
                 if not cmd or cmd.isspace():
-                    raise ValueError(f'invalid cmd value: {cmd!r}')
-            case [*cmd] | {"cmd": [*cmd]}:  # type: ignore[misc]  # ignore "Alternative patterns bind different names"
-                if not (cmd and all(isinstance(s, str) for s in cmd) and cmd[0] and not cmd[0].isspace()):
-                    raise ValueError(f'invalid cmd value: {cmd!r}')
+                    raise ValueError(f"invalid cmd value: {cmd!r}")
+            # ignore "Alternative patterns bind different names"
+            case [*cmd] | {"cmd": [*cmd]}:  # type: ignore[misc]
+                if not (cmd and all(isinstance(s, str)
+                                    for s in cmd) and cmd[0] and not cmd[0].isspace()):
+                    raise ValueError(f"invalid cmd value: {cmd!r}")
             case {"cmd": value}:
-                raise ValueError(f'invalid cmd value: {value!r}')
+                raise ValueError(f"invalid cmd value: {value!r}")
             case _:
                 cmd = None
 
@@ -387,28 +393,30 @@ class Task:
                 case None as cwd:
                     pass
                 case value:
-                    raise ValueError(f'invalid cwd value: {value!r}')
+                    raise ValueError(f"invalid cwd value: {value!r}")
 
             env: str | dict[str, str] | None
             match entry.get("env"):
                 case str(env) if env or not env.isspace():
                     pass
-                case {**table} if all(isinstance(k, str) and isinstance(v, str) for k, v in table.items()):
+                case {**table} if (all(isinstance(k, str) and
+                                       isinstance(v, str) for k, v in table.items())):
                     env = cast(dict[str, str], table)
                 case None as env:
                     pass
                 case value:
-                    raise ValueError(f'invalid env value: {value!r}')
+                    raise ValueError(f"invalid env value: {value!r}")
 
             match entry.get("env-file"):
                 case str(env_file) if env_file and not env_file.isspace():
                     pass
-                case [*env_file] if env_file and all(isinstance(v, str) and v and not v.isspace() for v in env_file):
+                case [*env_file] if (env_file and all(isinstance(v, str) and v and
+                                                      not v.isspace() for v in env_file)):
                     pass
                 case None as env_file:
                     pass
                 case value:
-                    raise ValueError(f'invalid env-file value: {value!r}')
+                    raise ValueError(f"invalid env-file value: {value!r}")
         else:
             cwd = env = env_file = None
 
@@ -418,29 +426,29 @@ class Task:
             case None as help:
                 pass
             case value:
-                raise ValueError(f'invalid help value: {value!r}')
+                raise ValueError(f"invalid help value: {value!r}")
 
         match entry.get("pre"):
             case [*tasks]:
                 try:
                     pre_tasks = cls._parse_tasks(tasks)
                 except ValueError as exc:
-                    raise ValueError(f'invalid pre task value: {exc}')
+                    raise ValueError(f"invalid pre task value: {exc}") from None
             case None as pre_tasks:
                 pass
             case value:
-                raise ValueError(f'invalid pre value: {value!r}')
+                raise ValueError(f"invalid pre value: {value!r}")
 
         match entry.get("post"):
             case [*tasks]:
                 try:
                     post_tasks = cls._parse_tasks(tasks)
                 except ValueError as exc:
-                    raise ValueError(f'invalid post task value: {exc}')
+                    raise ValueError(f"invalid post task value: {exc}") from None
             case None as post_tasks:
                 pass
             case value:
-                raise ValueError(f'invalid post value: {value!r}')
+                raise ValueError(f"invalid post value: {value!r}")
 
         if not (cmd or pre_tasks or post_tasks):
             raise ValueError("task requires at least one of cmd, pre, or post")
@@ -457,7 +465,8 @@ class Task:
             match task:
                 case str() if task and not task.isspace():
                     task_list.append(shlex.split(task))
-                case [str(name), *args] if name and not name.isspace() and all(isinstance(a, str) for a in args):
+                case [str(name), *args] if (name and not name.isspace() and
+                                            all(isinstance(a, str) for a in args)):
                     task_list.append(task)
                 case _:
                     raise ValueError(repr(task))

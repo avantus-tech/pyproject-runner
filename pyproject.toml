@@ -39,36 +39,38 @@ dev = [
     "hypothesis ~= 6.119",
     "mypy ~= 1.11",
     "pytest ~= 8.3",
+    "ruff ~= 0.8.2",
+    "typing-extensions",
 ]
 
 [tool.coverage.report]
 exclude_lines = [
-    'pragma: no cover',
-    'def __repr__',
-    'raise AssertionError',
-    'raise NotImplementedError',
-    'if __name__ == .__main__.:',
-    'if TYPE_CHECKING:',
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
     '@(typing\.)?overload',
 ]
 
 [tool.coverage.run]
 branch = true
-source = ['src/pyproject_runner']
+source = ["src/pyproject_runner"]
 omit = [
-	'__main__.py',
+	"__main__.py",
 ]
 
 
 [tool.hatch.build.targets.sdist]
 only-include = [
-    '.python-version',
-    'uv.lock',
-    'src/pyproject_runner/',
-    '.gitignore',
-    'LICENSE.txt',
-    'README.md',
-    'pyproject.toml',
+    ".python-version",
+    "uv.lock",
+    "src/pyproject_runner/",
+    ".gitignore",
+    "LICENSE.txt",
+    "README.md",
+    "pyproject.toml",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -83,11 +85,96 @@ strict = true
 testpaths = ["tests"]
 
 [tool.pyproject-runner.tasks]
-check = {pre=["typecheck", "test"], help="Perform all code checks"}
+check = {pre=["typecheck", "lint", "test"], help="Perform all code checks"}
 coverage = {cmd='uv run --with "pytest-cov~=6.0" pytest --cov=pyproject_runner', help="Run unit tests and report coverage"}
-help = {cmd="uv run rr -l", help="Show this help and exit"}
+fix = {cmd="rr lint --fix", help="Fix issues found by `lint` (alias for `lint --fix`)"}
+help = {cmd="rr -l", help="Show this help and exit"}
+lint = {cmd="ruff check", help="Lint the project source code"}
+preview = {cmd="rr lint --preview", help="Lint with unstable/preview rules (alias for `lint --preview`)"}
 test = {cmd="pytest", help="Run unit tests"}
 typecheck = {cmd="mypy src tests", help="Perform type analysis on src and tests"}
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+show-fixes = true
+target-version = "py310"
+
+[tool.ruff.lint]
+ignore = ["B904", "PLR0904", "PLR0911", "PLR0912", "PLR0913", "PLR0914", "PLR0915", "PLR0916", "PLR0917", "PLW", "TRY003", "FURB189"]
+select = [
+    # Listed in the order given on Ruff's website for easy comparison: https://docs.astral.sh/ruff/rules
+    "F",  # pyflakes
+    "E",  # pycodestyle error
+    "W",  # pycodestyle warning
+    # C90 (mccabe) is excluded, but maybe should be considered
+    "I",  # isort
+    "N",  # pep8-naming
+    "D",  # pydocstyle
+    "UP",  # pyupgrade
+    "YTT",  # flake8-2020
+    # ANN (flake8-annotations) duplicates mypy
+    # ASYNC (flake8-async) -- project has no async code
+    "S",  # flake8-bandit
+    "BLE",  # flake8-blind-except
+    "FBT",  # flake8-boolean-trap
+    "B",  # flake8-bugbear
+    "A",  # flake8-builtins
+    "COM",  # flake8-commas
+    # CPY (flake8-copyright) LICENSE.txt exists and is a permissive license
+    "C4",  # flake8-comprehensions
+    "DTZ",  # flake8-datetimez
+    "T10",  # flake8-debugger
+    # DJ (flake8-django) -- project doesn't use Django
+    # EM (flake8-errmsg) -- recommendations cause extra unneeded verbosity
+    "EXE",  # flake8-executable
+    "FA",  # flake8-future-annotations
+    "ISC",  # flake8-implicit-str-concat
+    "ICN",  # flake8-import-conventions
+    # LOG (flake8-logging) -- logging module is not used
+    # G (flake8-logging-format) -- logging module is not used
+    # INP (flake8-no-pep420) not needed and produces false alerts
+    "PIE",  # flake8-pie
+    "T20",  # flake8-print
+    "PYI",  # flake8-pyi
+    "PT",  # flake8-pytest-style
+    "Q",  # flake8-quotes
+    "RSE",  # flake8-raise
+    "RET",  # flake8-return
+    "SLF",  # flake8-self
+    "SLOT",  # flake8-slots
+    "SIM",  # flake8-simplify
+    "TID",  # flake8-tidy-imports
+    # TC (flake8-type-checking) -- not something we want to implement in this project
+    # INT (flake8-gettext) -- internationalization not implemented
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    # TD (flake8-todos) -- using FIX instead
+    "FIX",  # flake8-fixme
+    "ERA",  # eradicate
+    # PD (pandas-vet) -- pandas is not used
+    "PGH",  # pygrep-hooks
+    "PL",  # PyLint (except for PLW and others ignored above)
+    "TRY",  # tryceratops
+    "FLY",  # flynt
+    # NPY (NumPy-specific rules) -- numpy is not used
+    # FAST (FastAPI) -- FastAPI is not used
+    # AIR (Airflow) airflow is not used
+    "PERF",  # Perflint
+    "FURB",  # refurb
+    # DOC (pydoclint) requires overly verbose docstrings for a command-line utility
+    "RUF",  # Ruff-specific rules
+]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+
+[tool.ruff.lint.per-file-ignores]
+"src/pyproject_runner/__init__.py" = ["D104"]
+"tests/test_*.py" = ["S101", "PLC2701"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
 
 [tool.uv.workspace]
 members = ["shim"]
