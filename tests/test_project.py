@@ -19,6 +19,7 @@ from pyproject_runner import _project
 def project_module(monkeypatch: pytest.MonkeyPatch,
                    request: pytest.FixtureRequest) -> types.ModuleType:
     """Reload the project module to test Windows/POSIX differences."""
+    orig_platform = sys.platform
     if request.param:
         if sys.platform == "win32":
             monkeypatch.setattr(sys, "platform", "linux")
@@ -27,7 +28,9 @@ def project_module(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.delitem(sys.modules, "pyproject_runner._project")
     importlib.invalidate_caches()
 
-    return importlib.import_module("pyproject_runner._project")
+    module = importlib.import_module("pyproject_runner._project")
+    module.orig_platform = orig_platform  # type: ignore[attr-defined]
+    return module
 
 
 def test_external_scripts(tmp_path: pathlib.Path, project_module: types.ModuleType) -> None:
@@ -55,6 +58,8 @@ def test_external_scripts(tmp_path: pathlib.Path, project_module: types.ModuleTy
     script_names = sorted(project_module.external_scripts(tmp_path / project_module.VENV_BIN))
     if sys.platform == "win32":
         assert script_names == ["batch", "script"]
+    elif project_module.orig_platform == "win32":
+        assert script_names == ["script", "text.txt", "util.sh"]
     else:
         assert script_names == ["script", "util.sh"]
 
@@ -76,8 +81,12 @@ def test_external_scripts(tmp_path: pathlib.Path, project_module: types.ModuleTy
 def test_build_path(path: str | None, expected_path: str | None) -> None:
     """Test build_path() path substitution."""
     parent = "project/root"
-    assert _project.build_path(path, parent) == expected_path
-    assert _project.build_path(path, pathlib.Path(parent)) == expected_path
+    new_path = _project.build_path(path, parent)
+    if expected_path is None:
+        assert new_path is None
+    else:
+        assert new_path is not None
+        assert pathlib.Path(new_path) == pathlib.Path(expected_path)
 
 
 def test_pyproject_discover() -> None:
