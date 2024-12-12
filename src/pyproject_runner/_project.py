@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from typing import Literal
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -14,7 +15,7 @@ else:
     import tomli as tomllib
 
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, Final, Protocol, cast, overload
+from typing import Any, Final, Protocol, overload
 
 from . import environment
 
@@ -62,7 +63,7 @@ def build_path(path: str | None, parent: str | Path) -> str | None:
     return path
 
 
-class TaskLookupError(LookupError):
+class TaskError(Exception):
     pass
 
 
@@ -81,17 +82,17 @@ class Project(Protocol):
             try:
                 return Task.parse(entry)
             except ValueError:
-                raise TaskLookupError(f"{name!r} is an invalid task")
+                raise TaskError(f"{name!r} task definition is invalid")
         else:
             executable = shutil.which(name, path=self.venv_bin_path)
             if executable and not is_unsafe_script(Path(executable)):
                 return Task(name, executable=executable)
-        raise TaskLookupError(f"{name!r} is an unknown task")
+        raise TaskError(f"{name!r} task is not defined")
 
     def _tasks(self) -> Mapping[str, Any]:
         match self.doc:
-            case {"tool": {"pyproject-runner": {"tasks": {**tasks}}}}:
-                return cast(Mapping[str, Any], tasks)
+            case {"tool": {"pyproject-runner": {"tasks": dict(tasks)}}}:
+                return tasks
         return {}
 
     @property
@@ -135,7 +136,7 @@ class PyProject(Project):
         match document:
             case {"project": {"name": str(name)}}:
                 return cls(name, root, doc=document)
-        raise ValueError("invalid python project document")
+        raise ValueError("Invalid python project document")
 
     def __repr__(self) -> str:
         args = f"name={self.name!r}, root={self.root!r}, doc={self.doc!r}"
@@ -277,10 +278,21 @@ class Task:
         return f'{self.__class__.__module__}.{self.__class__.__qualname__}({", ".join(args)})'
 
     def to_dict(self) -> dict[str, Any]:
-        return {name: value for name in self.__slots__
+        def convert(value: Any) -> Any:
+            match value:
+                case str():
+                    pass
+                case Mapping():
+                    value = {k: convert(v) for k, v in value.items()}
+                case Sequence():
+                    value = [convert(v) for v in value]
+            return value
+
+        return {name.replace("_", "-"): convert(value)
+                for name in self.__slots__
                 if (value := getattr(self, name)) is not None}
 
-    def _get_environment(self, project: PyProject) -> dict[str, str]:
+    def _get_environment(self, project: PyProject, name: str) -> dict[str, str]:
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = str(project.venv_path)
         env["VIRTUAL_ENV_BIN"] = str(project.venv_bin_path)
@@ -297,55 +309,70 @@ class Task:
             env["PATH"] = str(project.venv_bin_path)
         else:
             env["PATH"] = f"{project.venv_bin_path}{os.pathsep}{path}"
-
-        if isinstance(self.env, str):
-            env = environment.expand(self.env, env)
-        elif self.env:
-            env.update(self.env)
-
-        env_file: str | list[str]
-        match self.env_file:
-            case str(env_file):
-                env_file = [env_file]
-            case [*env_file]:
-                pass
-            case _:
-                env_file = []
-        env_path: str | None
-        for env_path in env_file:
-            env_path = build_path(env_path, project.root)
-            if env_path:
-                with Path(env_path).open(encoding="utf-8") as file:
-                    text = file.read()
-                env = environment.expand(text, env)
-
+        env = self.expand_environment(project, name, env)
         env.pop("PYTHONHOME", None)
         return env
 
-    def run(self, project: PyProject, args: Sequence[str]) -> int:
-        # Look up tasks before attempting to run them
-        try:
-            pre_tasks = [(project.task(name), args)
-                         for name, *args in self.pre] if self.pre else None
-        except TaskLookupError:
-            raise TaskLookupError("pre task lookup failed")
-        try:
-            post_tasks = [(project.task(name), args)
-                          for name, *args in self.post] if self.post else None
-        except TaskLookupError:
-            raise TaskLookupError("post task lookup failed")
+    def expand_environment(self, project: PyProject,
+                           name: str, env: Mapping[str, str]) -> dict[str, str]:
+        if isinstance(self.env, str):
+            try:
+                expanded_env = environment.expand(self.env, env)
+            except SyntaxError:
+                raise TaskError(f"Failed to process 'env' value from {name!r} task")
+        else:
+            expanded_env = dict(env)
+            if self.env:
+                expanded_env.update(self.env)
 
+        match self.env_file:
+            case str(env_file):
+                env_files = [env_file]
+            case [*env_files]:
+                pass
+            case _:
+                env_files = []
+
+        env_path: str | None
+        for env_path in env_files:
+            env_path = build_path(env_path, project.root)
+            if env_path:
+                try:
+                    with Path(env_path).open(encoding="utf-8") as file:
+                        expanded_env = environment.expand(file.read(), expanded_env)
+                except (OSError, SyntaxError) as exc:
+                    exc.filename = env_path
+                    raise TaskError(f"Failed to process 'env-file' from {name!r} task")
+
+        return expanded_env
+
+    def run(self, project: PyProject, name: str, args: Sequence[str]) -> int:
+        """Run the task, returning the process error code."""
+        # Look up tasks before attempting to run them
+        pre_tasks = self.resolve_tasks(project, name, "pre")
+        post_tasks = self.resolve_tasks(project, name, "post")
         # Execute pre-tasks, then this task, followed by post-tasks, stopping on any error
         returncode = 0
         if pre_tasks:
             returncode = self._run_tasks(project, pre_tasks)
         if not returncode and self.cmd:
-            returncode = self._run(project, args)
+            returncode = self._run(project, name, args)
         if post_tasks and not returncode:
             returncode = self._run_tasks(project, post_tasks)
         return returncode
 
-    def _run(self, project: PyProject, args: Sequence[str]) -> int:
+    def resolve_tasks(self, project: PyProject, task_name: str, list_name: Literal["pre", "post"],
+                     ) -> list[tuple[str, Task, Sequence[str]]] | None:
+        """Resolve pre- and post-task names to Task objects."""
+        task_list: Sequence[Sequence[str]] | None = getattr(self, list_name)
+        if task_list:
+            try:
+                return [(name, project.task(name), args) for name, *args in task_list]
+            except TaskError:
+                raise TaskError(f"Failed to resolve a {list_name!r} task from {task_name!r} task")
+        return None
+
+    def _run(self, project: PyProject, name: str, args: Sequence[str]) -> int:
         assert self.cmd  # noqa: S101
         args = [*self.cmd, *args]
         if not self.executable:
@@ -354,13 +381,13 @@ class Task:
             assert path  # noqa: S101
             args[0] = path
         cwd = build_path(self.cwd, project.root)
-        env = self._get_environment(project)
+        env = self._get_environment(project, name)
         return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode  # noqa: S603
 
     @staticmethod
-    def _run_tasks(project: PyProject, tasks: Sequence[tuple[Task, Sequence[str]]]) -> int:
-        for task, args in tasks:
-            returncode = task.run(project, args)
+    def _run_tasks(project: PyProject, tasks: Sequence[tuple[str, Task, Sequence[str]]]) -> int:
+        for name, task, args in tasks:
+            returncode = task.run(project, name, args)
             if returncode:
                 return returncode
         return 0
@@ -371,14 +398,14 @@ class Task:
         match entry:
             case str(cmd) | {"cmd": str(cmd)}:
                 if not cmd or cmd.isspace():
-                    raise ValueError(f"invalid cmd value: {cmd!r}")
+                    raise ValueError(f"Invalid 'cmd' value: {cmd!r}")
             # ignore "Alternative patterns bind different names"
             case [*cmd] | {"cmd": [*cmd]}:  # type: ignore[misc]
                 if not (cmd and all(isinstance(s, str)
                                     for s in cmd) and cmd[0] and not cmd[0].isspace()):
-                    raise ValueError(f"invalid cmd value: {cmd!r}")
+                    raise ValueError(f"Invalid 'cmd' value: {cmd!r}")
             case {"cmd": value}:
-                raise ValueError(f"invalid cmd value: {value!r}")
+                raise ValueError(f"Invalid 'cmd' value: {value!r}")
             case _:
                 cmd = None
 
@@ -393,19 +420,19 @@ class Task:
                 case None as cwd:
                     pass
                 case value:
-                    raise ValueError(f"invalid cwd value: {value!r}")
+                    raise ValueError(f"Invalid 'cwd' value: {value!r}")
 
             env: str | dict[str, str] | None
             match entry.get("env"):
                 case str(env) if env or not env.isspace():
                     pass
-                case {**table} if (all(isinstance(k, str) and
+                case dict(table) if (all(isinstance(k, str) and
                                        isinstance(v, str) for k, v in table.items())):
-                    env = cast(dict[str, str], table)
+                    env = table
                 case None as env:
                     pass
                 case value:
-                    raise ValueError(f"invalid env value: {value!r}")
+                    raise ValueError(f"Invalid 'env' value: {value!r}")
 
             match entry.get("env-file"):
                 case str(env_file) if env_file and not env_file.isspace():
@@ -416,7 +443,7 @@ class Task:
                 case None as env_file:
                     pass
                 case value:
-                    raise ValueError(f"invalid env-file value: {value!r}")
+                    raise ValueError(f"Invalid 'env-file' value: {value!r}")
         else:
             cwd = env = env_file = None
 
@@ -426,32 +453,32 @@ class Task:
             case None as help:
                 pass
             case value:
-                raise ValueError(f"invalid help value: {value!r}")
+                raise ValueError(f"Invalid 'help' value: {value!r}")
 
         match entry.get("pre"):
             case [*tasks]:
                 try:
                     pre_tasks = cls._parse_tasks(tasks)
                 except ValueError as exc:
-                    raise ValueError(f"invalid pre task value: {exc}") from None
+                    raise ValueError(f"Invalid 'pre' task value: {exc}") from None
             case None as pre_tasks:
                 pass
             case value:
-                raise ValueError(f"invalid pre value: {value!r}")
+                raise ValueError(f"Invalid 'pre' value: {value!r}")
 
         match entry.get("post"):
             case [*tasks]:
                 try:
                     post_tasks = cls._parse_tasks(tasks)
                 except ValueError as exc:
-                    raise ValueError(f"invalid post task value: {exc}") from None
+                    raise ValueError(f"Invalid 'post' task value: {exc}") from None
             case None as post_tasks:
                 pass
             case value:
-                raise ValueError(f"invalid post value: {value!r}")
+                raise ValueError(f"Invalid 'post' value: {value!r}")
 
         if not (cmd or pre_tasks or post_tasks):
-            raise ValueError("task requires at least one of cmd, pre, or post")
+            raise ValueError("Task must define at least one of 'cmd', 'pre', or 'post'")
 
         return cls(cmd, cwd=cwd, env=env, env_file=env_file, help=help,
                    pre=pre_tasks, post=post_tasks)
