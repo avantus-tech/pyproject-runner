@@ -170,9 +170,8 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
                 case Token("ASSIGN"):
                     return assignment_value()
                 case _:
-                    raise syntax_error("unexpected token", token)
-        raise syntax_error("invalid syntax", Token("TEXT", "", line=token.line,
-                                                   column=token.column + len(token.value)))
+                    break
+        raise syntax_error("Expected '=' after variable name", token)
 
     def assignment_value() -> list[Fragment]:
         """Parse the right-hand side of a variable assignment."""
@@ -230,17 +229,17 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
                         # It instead ends the string with the backslash as the last character.
                         yield Fragment(value[:1])
                         return
-                    # Return the unescaped string when in single-quotes
+                    # Unescaped string when in single-quotes
                     yield Fragment(value)
                 case Token("ESCAPE", value):
-                    # Return character after escape in double-quoted strings
+                    # Character after escape in double-quoted strings
                     yield Fragment(value[1:])
                 case Token(_, value):
                     yield Fragment(value, expandable=quote.type == "DQUOTE")
                 case _:  # pragma: no cover
                     raise NotImplementedError(token)
             empty = False
-        raise syntax_error("unterminated quote", quote)
+        raise syntax_error("Expected a matching end quote", quote)
 
     def syntax_error(msg: str, token: Token) -> SyntaxError:
         """Build and return a SyntaxError exception instance."""
@@ -266,9 +265,11 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
             case Token("WS"):
                 pass  # Discard
             case Token("TEXT", value) if value.isidentifier():
+                # Pass a token that will be used if tokens is exhausted
+                token = Token("TEXT", "", line=token.line, column=token.column + len(token.value))
                 yield value, assignment(token)
             case _:
-                raise syntax_error("unexpected token", token)
+                raise syntax_error("Expected a variable assignment or comment", token)
 
 
 def evaluate(text: str, env: Mapping[str, str | None]) -> dict[str, str | None]:

@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+import contextlib
 import functools
-import json
 import os
 from pathlib import Path
 import pprint
 import shutil
 import sys
 import textwrap
-from typing import NoReturn, overload
+import traceback
 
 import click
 
-from . import _project
+from . import _project, environment
 
 
 @click.command(
     context_settings={
         "allow_interspersed_args": False,
+        "help_option_names": ["-h", "--help"],
         "max_content_width": 120,
         "terminal_width": shutil.get_terminal_size().columns,
-        "help_option_names": ["-h", "--help"],
     },
 )
 @click.option("--color", type=click.Choice(["auto", "always", "never"]), default=None,
@@ -57,11 +57,12 @@ def main(ctx: click.Context, *, command: tuple[str, ...], color: str | None,
         try:
             project = _project.PyProject.load(project_path)
         except ValueError as exc:
-            _error(f"{project_path}: {exc}")
+            raise click.ClickException(f"{project_path}: {exc}.") from None
     else:
         project_or_none = _project.PyProject.discover(project_path or Path().cwd())
         if project_or_none is None:
-            _error("pyproject.toml not found")
+            raise click.FileError("pyproject.toml", f"File was not found in {str(project_path)!r} "
+                                                     "or any of its parent directories.")
         project = project_or_none
 
     if show_project:
@@ -77,12 +78,21 @@ def main(ctx: click.Context, *, command: tuple[str, ...], color: str | None,
         name, *args = command
         try:
             task = project.task(name)
-            sys.exit(task.run(project, args))
-        except _project.TaskLookupError as exc:
+            sys.exit(task.run(project, name, args))
+        except _project.TaskError as exc:
             msg = str(exc)
             if exc.__context__:
-                msg = f"{msg}: {exc.__context__}"
-            _error(msg)
+                match exc.__context__:
+                    case SyntaxError() as syntax_error:
+                        cause = _format_syntax_error(syntax_error)
+                    case _:
+                        cause = str(exc.__context__)
+                msg += f"\n  Caused by: {cause}"
+            raise click.ClickException(msg) from None
+
+
+def _format_syntax_error(exc: SyntaxError, /) -> str:
+    return "".join(traceback.format_exception_only(exc)).rstrip()
 
 
 def print_project(project: _project.PyProject) -> None:
@@ -111,14 +121,46 @@ def print_project(project: _project.PyProject) -> None:
             click.secho(f"  {name}", bold=True)
             try:
                 task = project.task(name)
-            except _project.TaskLookupError as exc:
+            except _project.TaskError as exc:
                 click.secho(f"    {exc.__context__ or exc}", fg="red")
             else:
-                # Normalize task to something that looks more like JSON.
-                # Basically, this turns tuples into lists, improving readability.
-                entry = json.loads(json.dumps(task.to_dict()))
-                for line in pprint.pformat(entry, width=width - 4, compact=True).splitlines():
-                    click.echo(f"    {line}")
+                _print_task(project, task, width)
+
+
+def _print_task(project: _project.PyProject, task: _project.Task, width: int) -> None:
+    # Normalize task to something that looks more like JSON.
+    # Basically, this turns tuples into lists, improving readability.
+    for line in pprint.pformat(task.to_dict(), width=width - 4).splitlines():
+        click.echo(f"    {line}")
+    # Check for errors in environment expansion
+    if isinstance(task.env, str):
+        with _try("parsing 'env' value"):
+            for _ in environment.parse(task.env): pass  # noqa: E701
+    if task.env_file:
+        paths = [task.env_file] if isinstance(task.env_file, str) else task.env_file
+        for path in paths:
+            with _try("parsing 'env-file' value"), Path(path).open(encoding="utf-8") as file:
+                for _ in environment.parse(file.read()): pass  # noqa: E701
+    for attr in ["post", "pre"]:
+        tasks = getattr(task, attr) or []
+        for name, *_ in tasks:
+            with _try(f"resolving {attr!r} task"):
+                project.task(name)
+
+
+@contextlib.contextmanager
+def _try(msg: str) -> Iterator[None]:
+    """Context manager that prints exceptions."""
+    try:
+        yield
+    except SyntaxError as exc:
+        error = _format_syntax_error(exc)
+    except (OSError, ValueError, _project.TaskError) as exc:
+        error = str(exc)
+    else:
+        return
+    click.secho(f"    Error {msg}:", fg="red")
+    click.secho(textwrap.indent(error, "      | "), fg="red")
 
 
 def content_width() -> int:
@@ -137,7 +179,7 @@ def print_tasks(project: _project.PyProject) -> None:
     for name in project.task_names:
         try:
             task = project.task(name)
-        except _project.TaskLookupError:  # noqa: PERF203
+        except _project.TaskError:  # noqa: PERF203
             continue
         else:
             items.append((style(name), textwrap.dedent(task.help) if task.help else ""))
@@ -161,8 +203,8 @@ def print_tasks_and_scripts(project: _project.PyProject) -> None:
         if not is_external:
             try:
                 project.task(name)
-            except _project.TaskLookupError:
-                marker = click.style("E", fg="red")
+            except _project.TaskError:
+                continue
         click.echo(f"{marker} {name}")
 
 
@@ -215,18 +257,6 @@ class Styled(str):
         except AttributeError:
             self._unstyled_length = len(click.unstyle(self))
         return self._unstyled_length
-
-
-@overload
-def _error(msg: str, exitcode: int = ...) -> NoReturn: ...
-@overload
-def _error(msg: str, exitcode: None) -> None: ...
-def _error(msg: str, exitcode: int | None = 1) -> None:
-    """Print an error message, and optionally exit."""
-    prefix = click.style("error", fg="red", bold=True)
-    click.echo(f"{prefix}: {msg}", err=True)
-    if exitcode is not None:
-        sys.exit(exitcode)
 
 
 if __name__ == "__main__":

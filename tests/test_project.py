@@ -123,7 +123,7 @@ def test_pyproject_load_invalid(tmp_path: pathlib.Path) -> None:
     """Check loading of an emtpy pyproject.toml."""
     path = tmp_path / "pyproject.toml"
     path.touch()
-    with pytest.raises(ValueError, match="invalid python project"):
+    with pytest.raises(ValueError, match="Invalid python project document"):
         _project.PyProject.load(path)
 
 
@@ -131,8 +131,8 @@ def test_pyproject_load_invalid(tmp_path: pathlib.Path) -> None:
     ("check", ("arg2", "1 2 3"), {},
      [(["check-command", "arg1", "arg2", "1 2 3"],
        {"cwd": None, "executable": None, "env": {}})]),
-    ("unknown-task", (), {}, _project.TaskLookupError("unknown task")),
-    ("invalid-task", (), {}, _project.TaskLookupError("invalid task")),
+    ("unknown-task", (), {}, _project.TaskError("task is not defined")),
+    ("invalid-task", (), {}, _project.TaskError("task definition is invalid")),
 ])
 def test_task_run(task_name: str, args: Sequence[str],
                   returncodes: dict[str, int],
@@ -166,6 +166,6 @@ def test_task_run(task_name: str, args: Sequence[str],
             return types.SimpleNamespace(returncode=returncodes.get(cmd[0], 0))
 
         monkeypatch.setattr(subprocess, "run", run)
-        returncode = task.run(project, args)
+        returncode = task.run(project, "test", args)
         assert commands == expected_commands
         assert returncode == returncodes.get(task_name, 0)

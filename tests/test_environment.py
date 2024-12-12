@@ -200,11 +200,11 @@ def test_parse(expr: str) -> None:
 
 
 @pytest.mark.parametrize(("text", "error"), [
-    ("ABC", "invalid syntax"),
-    ("= XYZ", "unexpected token"),
-    ("ABC XYZ", "unexpected token"),
-    ('ABC="123', "unterminated quote"),
-    ('ABC=123"', "unterminated quote"),
+    ("ABC", "Expected '=' after variable name"),
+    ("= XYZ", "Expected a variable assignment or comment"),
+    ("ABC XYZ", "Expected '=' after variable name"),
+    ('ABC="123', "Expected a matching end quote"),
+    ('ABC=123"', "Expected a matching end quote"),
 ])
 def test_parse_invalid(text: str, error: str) -> None:
     """Test that parse() fails with known bad expressions."""
