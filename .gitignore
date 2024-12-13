@@ -11,3 +11,9 @@ wheels/
 
 # PyCharm
 .idea
+
+# coverage state
+.coverage
+
+# hypothesis state
+.hypothesis
