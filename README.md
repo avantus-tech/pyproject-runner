@@ -367,6 +367,7 @@ Below is a list of features that might be implemented in the future (no guarante
  - [ ] Define common environment variables in [tool.pyproject-runner.environment]?
  - [ ] Environment variable expansion in task definitions
  - [ ] Add ability to create shims for tasks and/or scripts
+ - [ ] Support hiding tasks from task listings
 
 Do you have additional feature requests? Submit an issue or pull request.
 

@@ -138,9 +138,12 @@ def _print_task(project: _project.PyProject, task: _project.Task, width: int) ->
             for _ in environment.parse(task.env): pass  # noqa: E701
     if task.env_file:
         paths = [task.env_file] if isinstance(task.env_file, str) else task.env_file
+        path: str | None
         for path in paths:
-            with _try("parsing 'env-file' value"), Path(path).open(encoding="utf-8") as file:
-                for _ in environment.parse(file.read()): pass  # noqa: E701
+            path = _project.build_path(path, project.root)
+            if path:
+                with _try("parsing 'env-file' value"), Path(path).open(encoding="utf-8") as file:
+                    for _ in environment.parse(file.read()): pass  # noqa: E701
     for attr in ["post", "pre"]:
         tasks = getattr(task, attr) or []
         for name, *_ in tasks:
