@@ -77,8 +77,8 @@ only-include = [
 packages = ["src/pyproject_runner"]
 
 [tool.mypy]
+files = ["src", "tests"]
 mypy_path = "src"
-packages = "pyproject_runner"
 strict = true
 
 [tool.pytest.ini_options]
@@ -92,7 +92,7 @@ help = {cmd="rr -l", help="Show this help and exit"}
 lint = {cmd="ruff check", help="Lint the project source code"}
 preview = {cmd="rr lint --preview", help="Lint with unstable/preview rules (alias for `lint --preview`)"}
 test = {cmd="pytest", help="Run unit tests"}
-typecheck = {cmd="mypy src tests", help="Perform type analysis on src and tests"}
+typecheck = {cmd="mypy", help="Perform type analysis on src and tests"}
 
 [tool.ruff]
 src = ["src"]

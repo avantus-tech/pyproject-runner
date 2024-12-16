@@ -1,0 +1,52 @@
+# Prevent accidentally merging autosquash commits to develop and release branches.
+# Autosquash commits are those with a summary line starting with fixup! or squash!.
+# They are usually added by using --fixup or --squash with `git commit` and are
+# usually removed by rebasing using `git rebase -i --autosquash <base_commit>`.
+# They are meant to be rebased and this check should help prevent accidental
+# merging into historical branches.
+
+# This workflow doesn't use actions/checkout because it clones all the objects,
+# fetching more than we need for this simple test. Using --filter=tree:0 along
+# with --bare keeps the data transfer to a minimum.
+
+name: Block Autosquash Commits
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure git credential helper
+        run: git config --global credential.helper '!f() { test "$1" = get || return; echo username=oauth2; echo password="$GITHUB_TOKEN"; }; f'
+
+      - name: Minimally clone head branch
+        run: git clone --filter=tree:0 --bare --branch '${{ github.event.pull_request.head.ref }}' '${{ github.event.pull_request.head.repo.clone_url }}' .git
+
+      - name: Fetch base branch
+        run: git fetch --filter=tree:0 origin '${{ github.event.pull_request.base.ref }}'
+
+      - name: Detect fixup! and squash! commits
+        shell: bash
+        run: |
+          echo '::group::Autosquash commits'
+          ! git log --no-merges --pretty='format:%s' '${{ github.event.pull_request.base.ref }}'.. | grep -E '^(fixup|squash)!'
+          returncode=$?
+          echo '::endgroup::'
+          if (( $returncode )); then
+            echo '::error::Autosquash commits detected. Please rebase before merging.'
+            echo '### Autosquash commits detected. Please rebase before merging.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Try `git rebase -i --autosquash origin/${{ github.event.pull_request.base.ref }}`.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else
+            echo '::notice::All clear; no autosquash commits detected.'
+            echo '### All clear; no autosquash commits detected. :rocket:' >> "$GITHUB_STEP_SUMMARY"
+          fi
