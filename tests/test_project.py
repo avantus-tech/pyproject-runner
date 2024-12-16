@@ -3,7 +3,6 @@
 from collections.abc import Sequence
 import contextlib
 import importlib
-import os
 import pathlib
 import subprocess
 import sys
@@ -130,7 +129,7 @@ def test_pyproject_load_invalid(tmp_path: pathlib.Path) -> None:
 @pytest.mark.parametrize(("task_name", "args", "returncodes", "expected_commands"), [
     ("check", ("arg2", "1 2 3"), {},
      [(["check-command", "arg1", "arg2", "1 2 3"],
-       {"cwd": None, "executable": None, "env": {}})]),
+       {"cwd": None, "executable": None})]),
     ("unknown-task", (), {}, _project.TaskError("task is not defined")),
     ("invalid-task", (), {}, _project.TaskError("task definition is invalid")),
 ])
@@ -159,9 +158,7 @@ def test_task_run(task_name: str, args: Sequence[str],
         commands: list[tuple[list[str], dict[str, Any]]] = []
 
         def run(cmd: list[str], **kwargs: Any) -> types.SimpleNamespace:
-            env = kwargs.pop("env")
-            if env:
-                kwargs["env"] = {k: env[k] for k in env.keys() - os.environ.keys()}
+            kwargs.pop("env")
             commands.append((cmd, kwargs))
             return types.SimpleNamespace(returncode=returncodes.get(cmd[0], 0))
 
