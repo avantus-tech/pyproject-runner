@@ -1,0 +1,49 @@
+name: Pull Request Checks
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['*.md', '*.txt']
+  pull_request:
+    paths-ignore: ['*.md', '*.txt']
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+
+jobs:
+  check-code:
+    name: Code checks for ${{ matrix.name || matrix.python }}
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {python: '3.13'}
+          - {python: '3.12'}
+          - {name: Windows, python: '3.12', os: windows-latest}
+          - {name: Mac, python: '3.12', os: macos-latest}
+          - {python: '3.11'}
+          - {python: '3.10'}
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Synchronize virtual environment
+        run: uv sync --frozen
+
+      - name: Lint source code
+        run: uv run ruff check
+
+      - name: Type check code
+        run: uv run mypy
+
+      - name: Run tests
+        run: uv run pytest
