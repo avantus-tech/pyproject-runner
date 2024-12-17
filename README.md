@@ -12,6 +12,37 @@ Inspired by [Rye's run command](https://rye.astral.sh/guide/commands/run/), pypr
 *pyproject.toml* file. See [differences from `rye run`](#differences-from-rye-run) below for more
 information.
 
+**Table of Contents**
+
+* [Installation](#installation)
+  * [Using with uv-managed projects](#using-with-uv-managed-projects)
+  * [Convenience shim](#convenience-shim)
+  * [Requirements](#requirements)
+* [Usage](#usage)
+* [Configuration](#configuration)
+  * [`tool.pyproject-runner.tasks`](#toolpyproject-runnertasks)
+    * [`cmd`](#cmd)
+    * [`pre` and `post`](#pre-and-post)
+    * [`cwd`](#cwd)
+    * [`env`](#env)
+    * [`env-file`](#env-file)
+    * [`help`](#help)
+  * [`tool.uv.managed`](#tooluvmanaged)
+  * [Environment file syntax](#environment-file-syntax)
+    * [Example environment file](#example-environment-file)
+  * [Paths](#paths)
+  * [Environment variables](#environment-variables)
+* [Execution environment](#execution-environment)
+* [Differences from `rye run`](#differences-from-rye-run)
+  * [Call task type is unsupported](#call-task-type-is-unsupported)
+  * [Task chains](#task-chains)
+  * [Relative `env-file` paths](#relative-env-file-paths)
+  * [Tasks can mask scripts](#tasks-can-mask-scripts)
+* [Future features](#future-features)
+* [Frequently asked questions](#frequently-asked-questions)
+* [Changelog](#changelog)
+* [License](#license)
+
 
 ## Installation
 
@@ -385,6 +416,11 @@ Do you have additional feature requests? Submit an issue or pull request.
     - It makes it easy to move from Rye to uv, or to use with new uv projects.
     - Offers a shim to reduce typing.
     - It's simple, fast, and small, with less than 1000 lines of code.
+
+
+## Changelog
+
+View the full changelog [here](https://github.com/avantus-tech/pyproject-runner/releases).
 
 
 ## License

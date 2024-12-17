@@ -33,6 +33,11 @@ projects that may require different versions of pyproject-runner. uv automatical
 virtual environment to used based on the current working directory.
 
 
+## Changelog
+
+View the full changelog [here](https://github.com/avantus-tech/pyproject-runner/releases).
+
+
 ## License
 
 pyproject-runner is licensed under a [3-Clause BSD licence](LICENSE.txt).
