@@ -19,6 +19,7 @@ from . import _project, environment
 
 
 @click.command(
+    add_help_option=False,
     context_settings={
         "allow_interspersed_args": False,
         "help_option_names": ["-h", "--help"],
@@ -28,6 +29,7 @@ from . import _project, environment
 )
 @click.option("--color", type=click.Choice(["auto", "always", "never"]), default=None,
               help="Control colors in output.")
+@click.help_option()
 @click.option("-l", "--list", "do_list", is_flag=True, default=False,
               help="List tasks from project.")
 @click.option("--project", "project_path", metavar="PATH",
@@ -35,6 +37,7 @@ from . import _project, environment
               help="Use this pyproject.toml file or directory.")
 @click.option("--show-project", is_flag=True, default=False,
               help="Print project information and exit.")
+@click.version_option()
 @click.argument("command", metavar="[COMMAND]", nargs=-1)
 @click.pass_context
 def main(ctx: click.Context, *, command: tuple[str, ...], color: str | None,
@@ -265,4 +268,4 @@ class Styled(str):
 
 
 if __name__ == "__main__":
-    main()
+    main(prog_name="rr")
