@@ -1,6 +1,6 @@
 [project]
 name = "pyproject-runner"
-version = "0.1.0"
+dynamic = ["readme", "version"]
 description = "Run tasks defined in pyproject.toml files."
 authors = [
     { name = "Brandon Carpenter", email = "brandon@avantus.com" }
@@ -9,7 +9,6 @@ dependencies = [
     "click >= 6",
     "tomli >= 1.1; python_version < '3.11'",
 ]
-readme = "README.md"
 requires-python = ">= 3.10"
 license.file = "LICENSE.txt"
 classifiers = [
@@ -23,15 +22,16 @@ classifiers = [
 ]
 
 [project.scripts]
-"rr" = "pyproject_runner.__main__:main"  # short for runner-run or run-runner
+rr = "pyproject_runner.__main__:main"  # short for runner-run or run-runner
 
 [project.urls]
 homepage = "https://github.com/avantus-tech/pyproject-runner"
-documentation = "https://github.com/avantus-tech/pyproject-runner"
-source = "https://github.com/avantus-tech/pyproject-runner"
+documentation = "https://github.com/avantus-tech/pyproject-runner/blob/main/README.md"
+repository = "https://github.com/avantus-tech/pyproject-runner"
+changelog = "https://github.com/avantus-tech/pyproject-runner/releases"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs", "hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
@@ -61,10 +61,8 @@ omit = [
 	"__main__.py",
 ]
 
-
 [tool.hatch.build.targets.sdist]
 only-include = [
-    ".python-version",
     "uv.lock",
     "src/pyproject_runner/",
     ".gitignore",
@@ -75,6 +73,23 @@ only-include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyproject_runner"]
+
+# Temporary fix for https://github.com/astral-sh/uv/issues/7533
+[tool.hatch.metadata.hooks.custom]
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+fragments = [
+    {path = "README.md"},
+]
+substitutions = [
+    {pattern = '\(LICENSE.txt\)', replacement = '(https://github.com/avantus-tech/pyproject-runner/blob/main/LICENSE.txt)'},
+    {pattern = '\(shim/README.md\)', replacement = '(/project/pyproject-runner-shim/)'},
+]
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.dev0+local"
 
 [tool.mypy]
 files = ["src", "tests"]

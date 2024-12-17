@@ -17,3 +17,6 @@ wheels/
 
 # hypothesis state
 .hypothesis
+
+# let developers pin their favorite version
+.python-version
