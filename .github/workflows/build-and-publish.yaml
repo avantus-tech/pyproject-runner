@@ -1,0 +1,84 @@
+name: Build and Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    name: Build and check the release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Build and inspect Python packages
+        uses: hynek/build-and-inspect-python-package@v2
+        id: baipp
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.event.release.tag_name }}
+
+      - name: Upload Python packages to GitHub assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.baipp.outputs.dist }}"/*.{tar.gz,whl}
+
+      - name: Build and inspect shim Python packages
+        uses: hynek/build-and-inspect-python-package@v2
+        id: baipp_shim
+        with:
+          path: shim
+          upload-name-suffix: " - shim"
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.event.release.tag_name }}
+
+      - name: Upload shim Python packages to GitHub assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.baipp_shim.outputs.dist }}"/*.{tar.gz,whl}
+
+  test-publish:
+    if: ${{ github.event.release.prerelease }}
+    name: Publish on Test PyPI
+    runs-on: ubuntu-latest
+    needs: build-release
+    environment: test-release
+    permissions:
+      id-token: write
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Packages
+          path: dist
+
+      - name: Upload package to Test PyPI
+        run: uv publish --trusted-publishing always --publish-url https://test.pypi.org/legacy/
+
+  publish:
+    if: ${{ ! github.event.release.prerelease }}
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build-release
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Packages
+          path: dist
+
+      - name: Upload package to PyPI
+        run: uv publish --trusted-publishing always
