@@ -21,15 +21,8 @@ information.
 * [Usage](#usage)
 * [Configuration](#configuration)
   * [`tool.pyproject-runner.tasks`](#toolpyproject-runnertasks)
-    * [`cmd`](#cmd)
-    * [`pre` and `post`](#pre-and-post)
-    * [`cwd`](#cwd)
-    * [`env`](#env)
-    * [`env-file`](#env-file)
-    * [`help`](#help)
   * [`tool.uv.managed`](#tooluvmanaged)
   * [Environment file syntax](#environment-file-syntax)
-    * [Example environment file](#example-environment-file)
   * [Paths](#paths)
   * [Environment variables](#environment-variables)
 * [Execution environment](#execution-environment)
@@ -233,7 +226,7 @@ Each variable assignment must start on a new line and include a variable name, f
 the line are ignored. Values may be optionally quoted to preserve leading and trailing white space.
 Variables may be unset by excluding the value.
 
-Values may include other variables using bash-like variable substitution: \$name or \${name}.
+Values may include other variables using bash-like variable substitution: <span>\$</span>name or <span>\$</span>{name}.
 Unless escaped, variable expansion will occur in unquoted, double-quoted ("), and triple
 double-quoted values (\"""). Any character, including quotes and newlines, may be escaped using a
 backslash (\\).
@@ -294,41 +287,47 @@ So, if the *pyproject.toml* file is in `/user/project`, and the current working 
 
 Setting the following environment variables changes pyproject-runner's behavior.
 
-FORCE_COLOR
-: Force color output regardless of terminal support.
+<dl>
+<dt>FORCE_COLOR</dt>
+<dd>Force color output regardless of terminal support.</dd>
 
-NO_COLOR
-: Disable color output (takes precedence over `FORCE_COLOR`).
+<dt>NO_COLOR</dt>
+<dd>Disable color output (takes precedence over <code>FORCE_COLOR</code>).</dd>
 
-UV_PROJECT_ENVIRONMENT
-: Specifies the path to the directory to use for a project virtual environment (see
-  [uv's documentation](https://docs.astral.sh/uv/configuration/environment/#uv_project_environment) for more info).
+<dt>UV_PROJECT_ENVIRONMENT</dt>
+<dd>Specifies the path to the directory to use for the project virtual environment (see
+  <a href="https://docs.astral.sh/uv/configuration/environment/#uv_project_environment">uv's documentation</a>
+  for more information).</dd>
 
-VIRTUAL_ENV
-: Specifies the path to the project's virtual environment. Ignored unless `tool.uv.managed` is set to `false`.
+<dt>VIRTUAL_ENV</dt>
+<dd>Specifies the path to the project's virtual environment. Ignored unless
+  <code>tool.uv.managed</code> is set to <code>false</code>.</dd>
+</dl>
 
 ## Execution environment
 
 Several environment variables are set before executing tasks or processing `env-file` files. Paths
 are absolute unless otherwise specified.
 
-VIRTUAL_ENV
-: Root of the project's virtual environment.
+<dl>
+<dt>VIRTUAL_ENV</dt>
+<dd>Root of the project's virtual environment.</dd>
 
-VIRTUAL_ENV_BIN
-: Directory in the project's virtual environment containing the python executable and scripts.
+<dt>VIRTUAL_ENV_BIN</dt>
+<dd>Directory in the project's virtual environment containing the python executable and scripts.</dd>
 
-INITIAL_DIR
-: Current working directory at the time pyproject-runner was executed.
+<dt>INITIAL_DIR</dt>
+<dd>Current working directory at the time pyproject-runner was executed.</dd>
 
-PROJECT_DIR
-: Directory where the *pyproject.toml* file was found.
+<dt>PROJECT_DIR</dt>
+<dd>Directory where the <i>pyproject.toml</i> file was found.</dd>
 
-WORKSPACE_DIR
-: Workspace root, if the project is part of a workspace; otherwise it is unset.
+<dt>WORKSPACE_DIR</dt>
+<dd>Workspace root, if the project is part of a workspace; otherwise it is unset.</dd>
 
-PATH
-: Set or modified so that `$VIRTUAL_ENV_BIN` is the first path.
+<dt>PATH</dt>
+<dd>Set or modified so that <code>$VIRTUAL_ENV_BIN</code> is the first path.</dd>
+</dl>
 
 `PYTHONHOME` is removed from the environment, if it is set.
 

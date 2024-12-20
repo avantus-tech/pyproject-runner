@@ -83,7 +83,8 @@ fragments = [
     {path = "README.md"},
 ]
 substitutions = [
-    {pattern = '\(LICENSE.txt\)', replacement = '(https://github.com/avantus-tech/pyproject-runner/blob/main/LICENSE.txt)'},
+    {pattern = '\]\((#[a-z-]+)\)', replacement = '](https://github.com/avantus-tech/pyproject-runner/blob/$HFPR_VERSION/README.md/\1)'},
+    {pattern = '\(LICENSE.txt\)', replacement = '(https://github.com/avantus-tech/pyproject-runner/blob/$HFPR_VERSION/LICENSE.txt)'},
     {pattern = '\(shim/README.md\)', replacement = '(/project/pyproject-runner-shim/)'},
 ]
 
