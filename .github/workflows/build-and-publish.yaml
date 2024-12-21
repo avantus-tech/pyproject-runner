@@ -22,6 +22,16 @@ jobs:
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.event.release.tag_name }}
 
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+
+      - name: Dump steps context
+        env:
+          STEPS_CONTEXT: ${{ toJson(steps) }}
+        run: echo "$STEPS_CONTEXT"
+
       - name: Build and inspect shim Python package
         uses: hynek/build-and-inspect-python-package@v2
         with:
@@ -29,7 +39,17 @@ jobs:
           upload-name-suffix: " - shim"
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.event.release.tag_name }}
-          
+
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+
+      - name: Dump steps context
+        env:
+          STEPS_CONTEXT: ${{ toJson(steps) }}
+        run: echo "$STEPS_CONTEXT"
+
       - name: Upload Python packages to GitHub assets
         env:
           GH_TOKEN: ${{ github.token }}
