@@ -30,7 +30,7 @@ def main():
         else:
             main(prog_name="rr")
     else:
-        run(["uv", "run", "--", "python", __file__, RUN_KEY, *sys.argv[1:]])
+        run(["uv", "run", "--frozen", "--", "python", __file__, RUN_KEY, *sys.argv[1:]])
 
 
 def run(cmd: list[str]) -> None:
