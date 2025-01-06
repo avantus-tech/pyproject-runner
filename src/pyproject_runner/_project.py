@@ -81,8 +81,8 @@ class Project(Protocol):
         if entry:
             try:
                 return Task.parse(entry)
-            except ValueError:
-                raise TaskError(f"{name!r} task definition is invalid")
+            except ValueError as exc:
+                raise TaskError(f"{name!r} task definition is invalid") from exc
         else:
             executable = shutil.which(name, path=self.venv_bin_path)
             if executable and not is_unsafe_script(Path(executable)):
@@ -318,8 +318,8 @@ class Task:
         if isinstance(self.env, str):
             try:
                 expanded_env = environment.expand(self.env, env)
-            except SyntaxError:
-                raise TaskError(f"Failed to process 'env' value from {name!r} task")
+            except SyntaxError as exc:
+                raise TaskError(f"Failed to process 'env' value from {name!r} task") from exc
         else:
             expanded_env = dict(env)
             if self.env:
@@ -342,7 +342,7 @@ class Task:
                         expanded_env = environment.expand(file.read(), expanded_env)
                 except (OSError, SyntaxError) as exc:
                     exc.filename = env_path
-                    raise TaskError(f"Failed to process 'env-file' from {name!r} task")
+                    raise TaskError(f"Failed to process 'env-file' from {name!r} task") from exc
 
         return expanded_env
 
@@ -368,8 +368,9 @@ class Task:
         if task_list:
             try:
                 return [(name, project.task(name), args) for name, *args in task_list]
-            except TaskError:
-                raise TaskError(f"Failed to resolve a {list_name!r} task from {task_name!r} task")
+            except TaskError as exc:
+                raise TaskError(f"Failed to resolve a {list_name!r} task "
+                                f"from {task_name!r} task") from exc
         return None
 
     def _run(self, project: PyProject, name: str, args: Sequence[str]) -> int:

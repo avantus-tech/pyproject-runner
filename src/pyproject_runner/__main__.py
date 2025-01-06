@@ -14,6 +14,7 @@ import textwrap
 import traceback
 
 import click
+from click import ClickException
 
 from . import _project, environment
 
@@ -84,14 +85,16 @@ def main(ctx: click.Context, *, command: tuple[str, ...], color: str | None,
         try:
             task = project.task(name)
             sys.exit(task.run(project, name, args))
+        except OSError as exc:
+            raise ClickException(str(exc)) from None
         except _project.TaskError as exc:
             msg = str(exc)
-            if exc.__context__:
-                match exc.__context__:
+            if exc.__cause__:
+                match exc.__cause__:
                     case SyntaxError() as syntax_error:
                         cause = _format_syntax_error(syntax_error)
                     case _:
-                        cause = str(exc.__context__)
+                        cause = str(exc.__cause__)
                 msg += f"\n  Caused by: {cause}"
             raise click.ClickException(msg) from None
 
@@ -127,7 +130,7 @@ def print_project(project: _project.PyProject) -> None:
             try:
                 task = project.task(name)
             except _project.TaskError as exc:
-                click.secho(f"    {exc.__context__ or exc}", fg="red")
+                click.secho(f"    {exc.__cause__ or exc}", fg="red")
             else:
                 _print_task(project, task, width)
 

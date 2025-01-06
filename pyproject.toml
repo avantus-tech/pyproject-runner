@@ -117,7 +117,7 @@ show-fixes = true
 target-version = "py310"
 
 [tool.ruff.lint]
-ignore = ["B904", "PLR0904", "PLR0911", "PLR0912", "PLR0913", "PLR0914", "PLR0915", "PLR0916", "PLR0917", "PLW", "TRY003", "FURB189"]
+ignore = ["PLR0904", "PLR0911", "PLR0912", "PLR0913", "PLR0914", "PLR0915", "PLR0916", "PLR0917", "PLW", "TRY003", "FURB189"]
 select = [
     # Listed in the order given on Ruff's website for easy comparison: https://docs.astral.sh/ruff/rules
     "F",  # pyflakes
@@ -187,7 +187,7 @@ force-sort-within-sections = true
 
 [tool.ruff.lint.per-file-ignores]
 "src/pyproject_runner/__init__.py" = ["D104"]
-"tests/test_*.py" = ["S101", "PLC2701"]
+"tests/test_*.py" = ["B904", "S101", "PLC2701"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
