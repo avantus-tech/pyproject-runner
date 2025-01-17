@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 from typing import Literal
@@ -63,6 +62,41 @@ def build_path(path: str | None, parent: str | Path) -> str | None:
     return path
 
 
+def _access_check(cmd: str | Path) -> bool:
+    return os.access(cmd, os.F_OK | os.X_OK) and not Path(cmd).is_dir()
+
+
+def which(cmd: str, path: str | Path) -> Path | None:
+    """Find the executable on the PATH in a consistent manner.
+
+    This is very similar to shutil.which(), except the current directory is
+    never prepended to the path. See the source code of shutil.which() for
+    details.
+    """
+    if os.sep in cmd:
+        return Path(cmd) if _access_check(cmd) else None
+    if not path:
+        return None
+
+    files = [cmd]
+    if sys.platform == "win32":
+        pathext_source = os.getenv("PATHEXT") or ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC"
+        pathext = [ext for ext in pathext_source.split(os.pathsep) if ext]
+        lower_cmd = cmd.lower()
+        if not any(lower_cmd.endswith(ext.lower()) for ext in pathext):
+            files = [cmd + ext for ext in pathext]
+
+    # Remove duplicates while maintaining order
+    paths = {os.path.normcase(p): p for p in os.fsdecode(path).split(os.pathsep)}.values()
+    for dirname in paths:
+        path = Path(dirname)
+        for filename in files:
+            file = path / filename
+            if _access_check(file):
+                return file
+    return None
+
+
 class TaskError(Exception):
     pass
 
@@ -84,7 +118,7 @@ class Project(Protocol):
             except ValueError as exc:
                 raise TaskError(f"{name!r} task definition is invalid") from exc
         else:
-            executable = shutil.which(name, path=self.venv_bin_path)
+            executable = which(name, self.venv_bin_path)
             if executable and not is_unsafe_script(Path(executable)):
                 return Task(name, executable=executable)
         raise TaskError(f"{name!r} task is not defined")
@@ -238,7 +272,7 @@ class Task:
     __slots__ = "cmd", "cwd", "env", "env_file", "executable", "help", "post", "pre"
 
     @overload
-    def __init__(self, cmd: str, *, executable: str) -> None: ...
+    def __init__(self, cmd: str, *, executable: Path) -> None: ...
     @overload
     def __init__(self, cmd: str | Sequence[str] | None, *, cwd: str | None = None,
                  env: str | Mapping[str, str] | None = None,
@@ -251,7 +285,7 @@ class Task:
                  env: str | Mapping[str, str] | None = None,
                  env_file: str | Sequence[str] | None = None,
                  help: str | None = None,  # noqa: A002
-                 executable: str | None = None,
+                 executable: Path | None = None,
                  pre: Sequence[Sequence[str]] | None = None,
                  post: Sequence[Sequence[str]] | None = None) -> None:
         if isinstance(cmd, str):
@@ -303,12 +337,16 @@ class Task:
             env["WORKSPACE_DIR"] = str(workspace.root)
         else:
             env.pop("WORKSPACE_DIR", None)
+
         try:
             path = env["PATH"]
         except KeyError:
-            env["PATH"] = str(project.venv_bin_path)
-        else:
-            env["PATH"] = f"{project.venv_bin_path}{os.pathsep}{path}"
+            path = os.defpath
+        path = os.fsdecode(path)
+        if str(project.venv_bin_path) not in path.split(os.pathsep):
+            path = f"{project.venv_bin_path}{os.pathsep}{path}"
+        env["PATH"] = path
+
         env = self.expand_environment(project, name, env)
         env.pop("PYTHONHOME", None)
         return env
@@ -376,14 +414,17 @@ class Task:
     def _run(self, project: PyProject, name: str, args: Sequence[str]) -> int:
         assert self.cmd  # noqa: S101
         args = [*self.cmd, *args]
-        if not self.executable:
+        cwd = build_path(self.cwd, project.root)
+        env = self._get_environment(project, name)
+        if not (executable := self.executable):
             exe = args[0]
             path = build_path(exe, project.root)
             assert path  # noqa: S101
             args[0] = path
-        cwd = build_path(self.cwd, project.root)
-        env = self._get_environment(project, name)
-        return subprocess.run(args, cwd=cwd, env=env, executable=self.executable).returncode  # noqa: S603
+            # See the warning about explicitly passing executable:
+            # https://docs.python.org/3/library/subprocess.html#subprocess.Popen
+            executable = which(path, env["PATH"])
+        return subprocess.run(args, cwd=cwd, env=env, executable=executable).returncode  # noqa: S603
 
     @staticmethod
     def _run_tasks(project: PyProject, tasks: Sequence[tuple[str, Task, Sequence[str]]]) -> int:
