@@ -74,9 +74,6 @@ only-include = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyproject_runner"]
 
-# Temporary fix for https://github.com/astral-sh/uv/issues/7533
-[tool.hatch.metadata.hooks.custom]
-
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
 fragments = [
