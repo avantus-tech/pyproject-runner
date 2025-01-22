@@ -249,7 +249,7 @@ def parse(text: str) -> Iterator[tuple[str, list[Fragment]]]:
         error.lineno = token.line
         error.offset = token.column + 1
         error.end_offset = error.offset + len(token.value)
-        error.print_file_and_line = True  # type: ignore[attr-defined]
+        error.print_file_and_line = True  # type: ignore[assignment]
         return error
 
     comment = False

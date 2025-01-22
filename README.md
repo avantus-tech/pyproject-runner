@@ -17,6 +17,7 @@ information.
 * [Installation](#installation)
   * [Using with uv-managed projects](#using-with-uv-managed-projects)
   * [Convenience shim](#convenience-shim)
+  * [Shell Completion](#shell-completion)
   * [Requirements](#requirements)
 * [Usage](#usage)
 * [Configuration](#configuration)
@@ -73,6 +74,17 @@ It is also recommended to install [pyproject-runner-shim](shim/README.md), which
 running tasks. uv doesn't recommend activating virtual environments, but suggests using `uv run`
 to execute scripts in the virtual environment. The shim allows shortening
 `uv run rr TASK ...` to `rr TASK ...` saving valuable keystrokes.
+
+### Shell completion
+
+Shell completion is supported for *bash*, *zsh*, and *fish*. Generally, it is necessary to add the
+completion script to the shell initialization file, such as *.bashrc* or *.zshrc*, or add it to the
+environment using *direnv*.
+
+The shell completion script is generated using `rr --shell-completion=SHELL`, replacing **SHELL**
+with *bash*, *zsh*, or *fish*. The script can be added to the initialization file or to a directory
+where completions are already being sourced, depending on the configuration. It can also be added
+to a shell session by directly evaluating the script: `eval $(rr --shell-completion=zsh)`.
 
 ### Requirements
 
@@ -393,7 +405,7 @@ Below is a list of features that might be implemented in the future (no guarante
  - [ ] Run tasks defined in parent workspace from child project (allow defining tasks common to the whole workspace)
  - [ ] Task aliases? Short name matching?
  - [x] Add option to show task help
- - [ ] Shell completion
+ - [X] Shell completion
  - [ ] Define common environment variables in [tool.pyproject-runner.environment]?
  - [ ] Environment variable expansion in task definitions
  - [ ] Add ability to create shims for tasks and/or scripts

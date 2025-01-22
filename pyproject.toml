@@ -98,7 +98,7 @@ strict = true
 testpaths = ["tests"]
 
 [tool.pyproject-runner.tasks]
-check = {pre=["typecheck", "lint", "test"], help="Perform all code checks"}
+check = {pre=["lint", "typecheck", "test"], help="Perform all code checks"}
 coverage = {cmd='uv run --with "pytest-cov~=6.0" pytest --cov=pyproject_runner', help="Run unit tests and report coverage"}
 fix = {cmd="rr lint --fix", help="Fix issues found by `lint` (alias for `lint --fix`)"}
 help = {cmd="rr -l", help="Show this help and exit"}
