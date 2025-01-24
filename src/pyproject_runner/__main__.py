@@ -244,14 +244,13 @@ def shell_completion_script(ctx: click.Context, param: click.Parameter, value: s
     cls=Command,
     context_settings={
         "allow_interspersed_args": False,
-        "help_option_names": ["-h", "--help"],
         "max_content_width": 120,
         "terminal_width": shutil.get_terminal_size().columns,
     },
 )
 @click.option("--color", type=click.Choice(["auto", "always", "never"]), default=None,
               help="Control colors in output.")
-@click.help_option()
+@click.help_option("-h", "--help")
 @click.option("-l", "--list", "do_list", is_flag=True, default=False,
               help="List project tasks and exit.")
 @click.option("--project", "project_path", metavar="PATH",
