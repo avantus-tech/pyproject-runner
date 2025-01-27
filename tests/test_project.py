@@ -122,7 +122,7 @@ def test_pyproject_load_invalid(tmp_path: pathlib.Path) -> None:
     """Check loading of an emtpy pyproject.toml."""
     path = tmp_path / "pyproject.toml"
     path.touch()
-    with pytest.raises(ValueError, match="Invalid python project document"):
+    with pytest.raises(_project.ProjectLoadError, match="Invalid python project document"):
         _project.PyProject.load(path)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 import re
@@ -97,6 +98,12 @@ def which(cmd: str, path: str | Path) -> Path | None:
     return None
 
 
+class ProjectLoadError(Exception):
+    def __init__(self, filename: str, msg: str) -> None:
+        super().__init__(msg)
+        self.filename = filename
+
+
 class TaskError(Exception):
     pass
 
@@ -123,11 +130,20 @@ class Project(Protocol):
                 return Task(name, executable=executable)
         raise TaskError(f"{name!r} task is not defined")
 
+    def get_task(self, name: str) -> Task | None:
+        try:
+            return self.task(name)
+        except TaskError:
+            return None
+
     def _tasks(self) -> Mapping[str, Any]:
         match self.doc:
             case {"tool": {"pyproject-runner": {"tasks": dict(tasks)}}}:
                 return tasks
         return {}
+
+    def external_scripts(self) -> Iterator[str]:
+        return external_scripts(self.venv_bin_path)
 
     @property
     def root(self) -> Path: ...
@@ -177,24 +193,37 @@ class PyProject(Project):
         return f"{self.__class__.__module__}.{self.__class__.__qualname__}({args})"
 
     @classmethod
+    def load_or_discover(cls, path: Path | None) -> PyProject:
+        """Attempt to load a project given a file or directory."""
+        if not path:
+            path = Path().cwd()
+        elif not path.is_dir():
+            return cls.load(path)
+        project = cls.discover(path)
+        if project is None:
+            raise FileNotFoundError(
+                errno.ENOENT, f"File was not found in {str(path)!r} "
+                              "or any of its parent directories", "pyproject.toml")
+        return project
+
+    @classmethod
     def discover(cls, path: Path) -> PyProject | None:
         while True:
             project_file = path / "pyproject.toml"
             if project_file.is_file():
-                try:
-                    return cls.load(project_file)
-                except ValueError:
-                    pass
-            parent = path.parent
-            if path == parent:
+                return cls.load(project_file)
+            if path == path.parent:
                 return None  # No more directories to traverse
-            path = parent
+            path = path.parent
 
     @classmethod
     def load(cls, project_file: Path) -> PyProject:
         with project_file.open("rb") as file:
-            doc = tomllib.load(file)
-        return cls.from_project_document(doc, project_file.parent)
+            try:
+                doc = tomllib.load(file)
+                return cls.from_project_document(doc, project_file.parent)
+            except ValueError as exc:
+                raise ProjectLoadError(str(project_file), str(exc)) from exc
 
     @property
     def workspace(self) -> Workspace | None:

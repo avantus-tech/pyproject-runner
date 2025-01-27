@@ -13,94 +13,11 @@ import sys
 import textwrap
 import traceback
 
-import click
-from click import ClickException
+import click.shell_completion
 
 from . import _project, environment
 
-
-@click.command(
-    add_help_option=False,
-    context_settings={
-        "allow_interspersed_args": False,
-        "help_option_names": ["-h", "--help"],
-        "max_content_width": 120,
-        "terminal_width": shutil.get_terminal_size().columns,
-    },
-)
-@click.option("--color", type=click.Choice(["auto", "always", "never"]), default=None,
-              help="Control colors in output.")
-@click.help_option()
-@click.option("-l", "--list", "do_list", is_flag=True, default=False,
-              help="List tasks from project.")
-@click.option("--project", "project_path", metavar="PATH",
-              type=click.Path(exists=True, dir_okay=True, resolve_path=True, path_type=Path),
-              help="Use this pyproject.toml file or directory.")
-@click.option("--show-project", is_flag=True, default=False,
-              help="Print project information and exit.")
-@click.version_option()
-@click.argument("command", metavar="[COMMAND]", nargs=-1)
-@click.pass_context
-def main(ctx: click.Context, *, command: tuple[str, ...], color: str | None,
-         do_list: bool, project_path: Path | None, show_project: bool) -> None:
-    """Run a configured task or a script installed for this package."""
-    match color:
-        case "auto":
-            ctx.color = None
-        case "always":
-            ctx.color = True
-        case "never":
-            ctx.color = False
-        case _:
-            if os.environ.get("NO_COLOR"):
-                ctx.color = False
-            elif os.environ.get("FORCE_COLOR"):
-                ctx.color = True
-
-    if project_path and project_path.is_file():
-        try:
-            project = _project.PyProject.load(project_path)
-        except ValueError as exc:
-            raise click.ClickException(f"{project_path}: {exc}.") from None
-    else:
-        if not project_path:
-            project_path = Path().cwd()
-        project_or_none = _project.PyProject.discover(project_path)
-        if project_or_none is None:
-            raise click.FileError("pyproject.toml", f"File was not found in {str(project_path)!r} "
-                                                     "or any of its parent directories.")
-        project = project_or_none
-
-    if show_project:
-        print_project(project)
-    elif do_list:
-        print_tasks(project)
-    elif not command:
-        click.echo("Provide a command to invoke with `rr <command>`.")
-        click.echo("\nThe following scripts ( ) and tasks (+) are available in the environment:\n")
-        print_tasks_and_scripts(project)
-        click.echo(f"\nSee {click.style('`rr --help`', bold=True)} for more information")
-    else:
-        name, *args = command
-        try:
-            task = project.task(name)
-            sys.exit(task.run(project, name, args))
-        except OSError as exc:
-            raise ClickException(str(exc)) from None
-        except _project.TaskError as exc:
-            msg = str(exc)
-            if exc.__cause__:
-                match exc.__cause__:
-                    case SyntaxError() as syntax_error:
-                        cause = _format_syntax_error(syntax_error)
-                    case _:
-                        cause = str(exc.__cause__)
-                msg += f"\n  Caused by: {cause}"
-            raise click.ClickException(msg) from None
-
-
-def _format_syntax_error(exc: SyntaxError, /) -> str:
-    return "".join(traceback.format_exception_only(exc)).rstrip()
+_PROG_NAME = "rr"
 
 
 def print_project(project: _project.PyProject) -> None:
@@ -174,6 +91,10 @@ def _try(msg: str) -> Iterator[None]:
     click.secho(textwrap.indent(error, "      | "), fg="red")
 
 
+def _format_syntax_error(exc: SyntaxError, /) -> str:
+    return "".join(traceback.format_exception_only(exc)).rstrip()
+
+
 def content_width() -> int:
     """Get the best content width for displaying help."""
     ctx = click.get_current_context()
@@ -206,7 +127,7 @@ def print_tasks_and_scripts(project: _project.PyProject) -> None:
     definition is in error are marked with an upper-case 'E'.
     """
     tasks = [(name, False) for name in project.task_names]
-    tasks += [(name, True) for name in _project.external_scripts(project.venv_bin_path)]
+    tasks += [(name, True) for name in project.external_scripts()]
     tasks.sort()
 
     for name, is_external in tasks:
@@ -270,5 +191,129 @@ class Styled(str):
         return self._unstyled_length
 
 
+def complete_tasks(ctx: click.Context, _param: click.Parameter,
+                   incomplete: str) -> list[click.shell_completion.CompletionItem]:
+    """Perform shell completion for tasks and scripts."""
+    if any(ctx.params[p] for p in ("command", "do_list", "show_project")):
+        return []  # Can't run anything if --list or --show-project are given
+
+    try:
+        project = _project.PyProject.load_or_discover(ctx.params.get("project_path"))
+    except (OSError, SyntaxError, ValueError):
+        return []
+
+    items: dict[str, str | None]
+    items = {name: None for name in project.external_scripts()
+             if name.startswith(incomplete)}
+    items |= {name: task.help and task.help.strip().split("\n", 1)[0]
+              for name in project.task_names
+              if name.startswith(incomplete) and (task := project.get_task(name))}
+    CompletionItem = click.shell_completion.CompletionItem  # noqa: N806
+    return [CompletionItem(name.replace(":", r"\:"), help=help_)
+            for name, help_ in sorted(items.items())]
+
+
+class Command(click.Command):
+    """Custom command to override shell completion."""
+
+    def shell_complete(self, ctx: click.Context,
+                       incomplete: str) -> list[click.shell_completion.CompletionItem]:
+        """Override shell completion."""
+        if ctx.params.get("command"):
+            return []  # Don't complete after a command is given
+        return super().shell_complete(ctx, incomplete)
+
+
+def shell_completion_script(ctx: click.Context, param: click.Parameter, value: str | None) -> None:
+    """Display shell completion script."""
+    if not value or ctx.resilient_parsing:
+        return
+
+    from click.shell_completion import get_completion_class
+
+    cls = get_completion_class(value)
+    if cls is None:
+        raise click.BadParameter(f"Unknown shell: {value!r}", ctx, param)
+    comp = cls(main, {}, _PROG_NAME, f"_{_PROG_NAME.upper()}_COMPLETE")
+    click.echo(comp.source())
+    sys.exit(0)
+
+
+@click.command(
+    add_help_option=False,
+    cls=Command,
+    context_settings={
+        "allow_interspersed_args": False,
+        "max_content_width": 120,
+        "terminal_width": shutil.get_terminal_size().columns,
+    },
+)
+@click.option("--color", type=click.Choice(["auto", "always", "never"]), default=None,
+              help="Control colors in output.")
+@click.help_option("-h", "--help")
+@click.option("-l", "--list", "do_list", is_flag=True, default=False,
+              help="List project tasks and exit.")
+@click.option("--project", "project_path", metavar="PATH",
+              type=click.Path(exists=True, dir_okay=True, resolve_path=True, path_type=Path),
+              help="Use this pyproject.toml file or directory.")
+@click.option("--shell-completion", metavar="SHELL",
+              is_eager=True, expose_value=False, callback=shell_completion_script,
+              help="Print a shell completion script (i.e. bash, fish, zsh) and exit.")
+@click.option("--show-project", is_flag=True, default=False,
+              help="Print project information and exit.")
+@click.version_option()
+@click.argument("command", metavar="[COMMAND]", nargs=-1, shell_complete=complete_tasks)
+@click.pass_context
+def main(ctx: click.Context, *, command: tuple[str, ...], color: str | None,
+         do_list: bool, project_path: Path | None, show_project: bool) -> None:
+    """Run a configured task or a script installed in the virtual environment."""
+    match color:
+        case "auto":
+            ctx.color = None
+        case "always":
+            ctx.color = True
+        case "never":
+            ctx.color = False
+        case _:
+            if os.environ.get("NO_COLOR"):
+                ctx.color = False
+            elif os.environ.get("FORCE_COLOR"):
+                ctx.color = True
+
+    try:
+        project = _project.PyProject.load_or_discover(project_path)
+    except _project.ProjectLoadError as exc:
+        raise click.ClickException(f"Error loading {exc.filename!r}: {exc}") from None
+    except FileNotFoundError as exc:
+        raise click.FileError(exc.filename, exc.args[1]) from None
+
+    if show_project:
+        print_project(project)
+    elif do_list:
+        print_tasks(project)
+    elif not command:
+        click.echo("Provide a command to invoke with `rr <command>`.")
+        click.echo("\nThe following scripts ( ) and tasks (+) are available in the environment:\n")
+        print_tasks_and_scripts(project)
+        click.echo(f"\nSee {click.style('`rr --help`', bold=True)} for more information")
+    else:
+        name, *args = command
+        try:
+            task = project.task(name)
+            sys.exit(task.run(project, name, args))
+        except OSError as exc:
+            raise click.ClickException(str(exc)) from None
+        except _project.TaskError as exc:
+            msg = str(exc)
+            if exc.__cause__:
+                match exc.__cause__:
+                    case SyntaxError() as syntax_error:
+                        cause = _format_syntax_error(syntax_error)
+                    case _:
+                        cause = str(exc.__cause__)
+                msg += f"\n  Caused by: {cause}"
+            raise click.ClickException(msg) from None
+
+
 if __name__ == "__main__":
-    main(prog_name="rr")
+    main(prog_name=_PROG_NAME)
