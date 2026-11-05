@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      tag-name:
+        description: Release tag
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag-name:
+        description: Release tag
+        type: string
+        required: true
+
+
+jobs:
+  build-release:
+    name: Build and check the release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag-name }}
+
+      - name: Build and inspect Python packages
+        uses: hynek/build-and-inspect-python-package@v3.0.2
+        id: package
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ inputs.tag-name }}
+
+      - name: Upload Python packages to GitHub assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag-name }}" "${{ steps.package.outputs.dist }}"/*.{tar.gz,whl}
+
+      - name: Build and inspect shim Python packages
+        uses: hynek/build-and-inspect-python-package@v3.0.2
+        id: shim
+        with:
+          path: shim
+          upload-name-suffix: " - shim"
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ inputs.tag-name }}
+
+      - name: Upload shim Python packages to GitHub assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag-name }}" "${{ steps.shim.outputs.dist }}"/*.{tar.gz,whl}

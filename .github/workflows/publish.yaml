@@ -1,0 +1,54 @@
+name: Publish
+
+on:
+  workflow_call:
+    inputs:
+      tag-name:
+        description: Release tag
+        type: string
+        required: true
+      test-release:
+        description: Publish to the PyPI test server
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      tag-name:
+        description: Release tag
+        type: string
+        required: true
+      test-release:
+        description: Publish to the PyPI test server
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    name: Publish to${{ inputs.test-release && ' Test' || ''}} PyPI
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.test-release && 'test-release' || 'release' }}
+    permissions:
+      id-token: write
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: false
+
+      - name: Download packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download ${{ inputs.tag-name }} --dir dist -p '*.tar.gz' -p '*.whl'
+
+      - name: Produce attestations
+        run: uv tool run pypi-attestations sign dist/*
+
+      - name: Upload package to PyPI
+        run: |
+          uv publish --no-progress --trusted-publishing always ${{ inputs.test-release && '--publish-url https://test.pypi.org/legacy/' || '' }} 2>&1 | tee ./publish.out
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          Release *${{ inputs.tag-name }}* published:
+          \`\`\`
+          $(< ./publish.out)
+          \`\`\`
+          EOF
