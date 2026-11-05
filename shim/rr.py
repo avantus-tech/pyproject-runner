@@ -24,7 +24,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == RUN_KEY:
         del sys.argv[1]
         try:
-            from pyproject_runner.__main__ import main
+            from pyproject_runner.__main__ import main  # noqa: PLC0415
         except ModuleNotFoundError:
             run(["uv", "tool", "run", "--from", "pyproject-runner", "rr", *sys.argv[1:]])
         else:

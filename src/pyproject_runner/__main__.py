@@ -229,7 +229,7 @@ def shell_completion_script(ctx: click.Context, param: click.Parameter, value: s
     if not value or ctx.resilient_parsing:
         return
 
-    from click.shell_completion import get_completion_class
+    from click.shell_completion import get_completion_class  # noqa: PLC0415
 
     cls = get_completion_class(value)
     if cls is None:

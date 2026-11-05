@@ -471,7 +471,7 @@ class Task:
                 if not cmd or cmd.isspace():
                     raise ValueError(f"Invalid 'cmd' value: {cmd!r}")
             # ignore "Alternative patterns bind different names"
-            case [*cmd] | {"cmd": [*cmd]}:  # type: ignore[misc]
+            case [*cmd] | {"cmd": [*cmd]}:
                 if not (cmd and all(isinstance(s, str)
                                     for s in cmd) and cmd[0] and not cmd[0].isspace()):
                     raise ValueError(f"Invalid 'cmd' value: {cmd!r}")
@@ -526,6 +526,7 @@ class Task:
             case value:
                 raise ValueError(f"Invalid 'help' value: {value!r}")
 
+        pre_tasks: list[list[str]] | None
         match entry.get("pre"):
             case [*tasks]:
                 try:
@@ -537,6 +538,7 @@ class Task:
             case value:
                 raise ValueError(f"Invalid 'pre' value: {value!r}")
 
+        post_tasks: list[list[str]] | None
         match entry.get("post"):
             case [*tasks]:
                 try:
