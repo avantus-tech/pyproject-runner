@@ -33,6 +33,7 @@ jobs:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ inputs.tag-name }}
 
       - name: Upload Python packages to GitHub assets
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ inputs.tag-name }}" "${{ steps.package.outputs.dist }}"/*.{tar.gz,whl}
@@ -45,8 +46,10 @@ jobs:
           upload-name-suffix: " - shim"
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ inputs.tag-name }}
+          UV_VENV_CLEAR: 1
 
       - name: Upload shim Python packages to GitHub assets
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ inputs.tag-name }}" "${{ steps.shim.outputs.dist }}"/*.{tar.gz,whl}
