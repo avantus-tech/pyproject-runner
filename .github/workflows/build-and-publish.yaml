@@ -65,6 +65,9 @@ jobs:
           name: "Packages - shim"
           path: dist
 
+      - name: Produce attestations
+        run: uv tool run pypi-attestations sign dist/*
+
       - name: Upload package to Test PyPI
         run: uv publish --trusted-publishing always --publish-url https://test.pypi.org/legacy/
 
@@ -91,6 +94,9 @@ jobs:
         with:
           name: "Packages - shim"
           path: dist
+
+      - name: Produce attestations
+        run: uv tool run pypi-attestations sign dist/*
 
       - name: Upload package to PyPI
         run: uv publish --trusted-publishing always

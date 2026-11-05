@@ -37,7 +37,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Synchronize virtual environment
-        run: uv sync --frozen
+        run: uv sync --frozen --reinstall-package pyproject-runner
 
       - name: Lint source code
         run: uv run ruff check
